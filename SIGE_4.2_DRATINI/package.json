@@ -1,0 +1,12 @@
+{
+  "name": "sige",
+  "version": "4.1.0",
+  "description": "SIGE — Sistema de Información Geográfica Electoral (sitio estático)",
+  "private": true,
+  "scripts": {
+    "start": "serve . -l $PORT"
+  },
+  "dependencies": {
+    "serve": "^14.2.4"
+  }
+}
