@@ -88,23 +88,6 @@
             </div>
           </div>
 
-          <!-- ── v4.0 Dratini: Índice SII ──────────────────────────────── -->
-          <div style="margin-top:16px;">
-            <p style="font-size:12px;font-weight:500;margin-bottom:8px">
-              🏠 Geocodificador SII <span style="font-weight:400;color:var(--tx3)">(opcional — enriquece el geocodificado automático)</span>
-            </p>
-            <label for="fi-sii">
-              <div class="uzone" id="dz-sii" style="padding:18px; display:flex; align-items:center; gap:14px; justify-content:flex-start; text-align:left;">
-                <div style="font-size:28px;flex-shrink:0;">🏘️</div>
-                <div>
-                  <p style="margin:0;font-size:13px;"><strong>Índice SII (.json.gz)</strong></p>
-                  <p style="margin:4px 0 0;font-size:11px;color:var(--tx3)" id="fn-sii">Generado con build_sii_index.py · 100% local, sin internet</p>
-                </div>
-              </div>
-            </label>
-            <input type="file" id="fi-sii" accept=".gz,.json">
-          </div>
-
           <div style="margin-top:20px; border: 2px dashed #a855f7; padding: 15px; border-radius: 8px; background: #faf5ff; text-align: center;">
             <h4 style="color: #6b21a8; margin-top: 0; font-size: 14px; margin-bottom: 8px;">🚀 Continuar Sesión Anterior</h4>
             <p style="font-size: 11px; color: var(--tx2); margin-bottom: 12px;">Arrastra aquí tu archivo .json de sesión para retomar todo donde lo dejaste (Incluye Polígonos y Localidades).</p>
@@ -251,6 +234,13 @@
                 <hr style="opacity: 0.1; margin: 10px 0;">
 
                 <div style="display: grid; grid-template-columns: 1fr; gap: 10px;">
+                  <button class="btn" style="padding: 14px; font-size: 14px; font-weight: 700; background:#0891b2; color:#fff; display:flex; justify-content:center; gap:8px;" onclick="window.exportEntregaQA()">
+                    📦 Entrega para QA (SIGEA)
+                  </button>
+                  <p style="font-size: 11px; color: var(--tx3); margin: -2px 0 6px; text-align:center;">
+                    Genera 2 archivos: <strong>.geojson</strong> (abre directo en ArcGIS Pro) y <strong>.xlsx</strong> (para SIGEA).<br>
+                    Guárdalos en tu carpeta: <strong>dev_007\funcionarios\[tu&nbsp;usuario]\</strong>
+                  </p>
                   <button class="btn btn-w" style="padding: 12px; border-color: #22c55e; color: #166534; font-weight: 600;" onclick="window.exportLocs()">
                     🏘️ Descargar Maestro de Localidades
                   </button>
@@ -338,17 +328,6 @@
           </p>
         </div>
 
-        <div style="margin-top: 24px; padding: 12px; background: var(--s2); border: 1px solid var(--bd2); border-radius: var(--r); display: flex; justify-content: space-between; align-items: center; border-left: 4px solid #16a34a;">
-          <div style="display: flex; flex-direction: column; gap: 2px;">
-            <span style="font-size: 10px; color: var(--tx3); text-transform: uppercase; letter-spacing: 0.5px;">Geocodificador SII (v4.0)</span>
-            <strong style="font-size: 13px; color: var(--p);">🏠 Índice local activo</strong>
-            <span style="font-size:11px;color:var(--tx3)">Carga el .json.gz en el paso 1 para habilitarlo</span>
-          </div>
-          <div>
-            <span class="api-status api-empty" id="sii-status">—</span>
-          </div>
-        </div>
-
         <!-- 🔍 SIGEC — geocodificador de predios SII (Supabase) -->
         <div style="margin-top: 16px; padding: 12px; background: var(--s2); border: 1px solid var(--bd2); border-radius: var(--r); border-left: 4px solid #0891b2;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -387,11 +366,11 @@
 
         <div style="margin-top: 16px; padding: 12px; background: var(--s2); border: 1px solid var(--bd2); border-radius: var(--r); display: flex; justify-content: space-between; align-items: center; border-left: 4px solid #e11d48;">
           <div style="display: flex; flex-direction: column; gap: 2px;">
-            <span style="font-size: 10px; color: var(--tx3); text-transform: uppercase; letter-spacing: 0.5px;">Versión Alpha (Mutación)</span>
-            <strong style="font-size: 13px; color: var(--p);">SIGE 4.0 - Dratini 🐉</strong>
+            <span style="font-size: 10px; color: var(--tx3); text-transform: uppercase; letter-spacing: 0.5px;">Versión</span>
+            <strong style="font-size: 13px; color: var(--p);">SIGE 4.2 - Dratini 🐉</strong>
           </div>
           <div style="text-align: right;">
-            <span style="font-size: 11px; background: #f0fdf4; color: #16a34a; padding: 4px 8px; border-radius: 4px; font-weight: 600;">SII Geocoder Activo</span>
+            <span style="font-size: 11px; background: #ecfeff; color: #0891b2; padding: 4px 8px; border-radius: 4px; font-weight: 600;">SIGEC Activo</span>
           </div>
         </div>
 
