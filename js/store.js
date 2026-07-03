@@ -18,9 +18,5 @@ export const state = {
 
   // 3. Capas GIS
   referenceGeoJSON: null,   // Objeto parseado del GeoJSON de fondo (polígonos)
-  recintosPointsData: null, // Objeto parseado del GeoJSON de puntos (recintos)
-
-  // 4. Geocodificador SII (v4.0 Dratini)
-  siiLoaded: false,         // Flag: índice SII activo en memoria
-  siiMeta: null             // { total_keys, total_streets, fileName, generated }
+  recintosPointsData: null  // Objeto parseado del GeoJSON de puntos (recintos)
 };

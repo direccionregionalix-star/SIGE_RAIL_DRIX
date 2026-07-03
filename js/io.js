@@ -1,4 +1,6 @@
 // io.js - Módulo de Input/Output (Exportaciones)
+import { DOMINIOS, ESRI_FIELDS } from './constants.js';
+import { resolveFinalCoords } from './coords.js';
 
 export function buildMainExport(rawData, origFileName) {
   const wb = window.XLSX.utils.book_new();
@@ -9,12 +11,11 @@ export function buildMainExport(rawData, origFileName) {
   window.XLSX.writeFile(wb, (origFileName || 'geocodificado') + '_estado.xlsx');
 }
 
-// Función auxiliar inteligente para encontrar el RUT/RUN sin importar mayúsculas o nombre exacto
+// Encuentra el RUT/RUN sin importar mayúsculas o nombre exacto de columna
 function extractRun(rawRow) {
   if (!rawRow) return null;
   const keys = Object.keys(rawRow);
   const rutKey = keys.find(k => ['run', 'rut'].some(alias => k.toLowerCase().includes(alias)));
-  
   if (rutKey && rawRow[rutKey]) {
     const match = String(rawRow[rutKey]).match(/\d+/);
     return match ? Number(match[0]) : null;
@@ -22,15 +23,21 @@ function extractRun(rawRow) {
   return null;
 }
 
-// Función compartida para llenar el cuadro de texto en la interfaz
+// Lee un campo de dirección tolerando mayúsculas (calle/CALLE)
+function field(rawRow, name) {
+  if (!rawRow) return null;
+  const v = rawRow[name] ?? rawRow[name.toUpperCase()] ?? rawRow[name.charAt(0).toUpperCase() + name.slice(1)];
+  const s = String(v ?? '').trim();
+  return s || null;
+}
+
+// Llena el cuadro de RUNs en la interfaz
 function updateRunListUI(runList) {
   const area = document.getElementById('run-list-area');
   if (area) {
-    if (runList.length > 0) {
-      area.value = runList.join(', ');
-    } else {
-      area.value = "⚠️ Archivo generado, pero no se detectaron columnas con el nombre 'RUN' o 'RUT'.";
-    }
+    area.value = runList.length > 0
+      ? runList.join(', ')
+      : "⚠️ Archivo generado, pero no se detectaron columnas con el nombre 'RUN' o 'RUT'.";
   }
 }
 
@@ -44,21 +51,13 @@ export function buildBackupExport(clusters, rawData, localidades, origFileName) 
 
     Object.values(clusters).forEach(c => {
       c.rows.forEach(r => {
-        const fila = exportData[r.id]; 
+        const fila = exportData[r.id];
         const rawRow = rawById.get(r.id) || {};
-        
         if (fila) {
-          const tipoFinal = r.tipo || c.tipo;
-          fila.tipo_geo = tipoFinal;
-          const origLat = parseFloat(rawRow.latitud || rawRow.geo_lat) || null;
-          const origLon = parseFloat(rawRow.longitud || rawRow.geo_lon) || null;
-
-          if (tipoFinal === 'NO GEO') {
-            fila.latitud = origLat; fila.longitud = origLon;
-          } else {
-            fila.latitud = r.latFinal ? parseFloat(r.latFinal) : origLat;
-            fila.longitud = r.lonFinal ? parseFloat(r.lonFinal) : origLon;
-          }
+          const { lat, lon, tipo } = resolveFinalCoords(r, c, rawRow);
+          fila.tipo_geo = tipo;
+          fila.latitud = lat;
+          fila.longitud = lon;
           if (r.metodo || c.metodo) fila.metodo = r.metodo || c.metodo;
         }
       });
@@ -77,7 +76,7 @@ export function buildBackupExport(clusters, rawData, localidades, origFileName) 
         window.XLSX.utils.book_append_sheet(wb, wsl, 'Nuevas_Localidades');
       }
     }
-    
+
     const baseName = origFileName ? origFileName.split('.')[0] : 'Proyecto';
     window.XLSX.writeFile(wb, `${baseName}_RESPALDO.xlsx`);
   }, 150);
@@ -87,69 +86,58 @@ export function buildBackupExport(clusters, rawData, localidades, origFileName) 
 // EXPORTACIÓN DE MAESTRO DE LOCALIDADES
 // ═══════════════════════════════════════════════════════════════
 export function buildLocsExport(localidades, origFileName) {
-    if (!localidades || localidades.length === 0) {
-        alert("No hay localidades en memoria para exportar.");
-        return;
-    }
-    const exportData = localidades.map(l => {
-        let fila = { ...l }; 
-        fila['Nombre'] = l.nombre; fila['Comuna'] = l.comuna;
-        if (l.codComuna) fila['CUT'] = l.codComuna;
-        fila['Latitud'] = l.lat; fila['Longitud'] = l.lon; fila['Origen'] = l.origen || 'oficial';
-        delete fila.nombre; delete fila.comuna; delete fila.lat; delete fila.lon;
-        delete fila.origen; delete fila.codComuna; delete fila.isNew;
-        return fila;
-    });
-    const wb = window.XLSX.utils.book_new();
-    const ws = window.XLSX.utils.json_to_sheet(exportData);
-    ws['!cols'] = [{wch: 25}, {wch: 20}, {wch: 10}, {wch: 15}, {wch: 15}, {wch: 15}];
-    window.XLSX.utils.book_append_sheet(wb, ws, "Maestro_Localidades");
-    const baseName = origFileName ? origFileName.split('.')[0] : 'Proyecto';
-    window.XLSX.writeFile(wb, `${baseName}_Localidades_Actualizado.xlsx`);
+  if (!localidades || localidades.length === 0) {
+    alert("No hay localidades en memoria para exportar.");
+    return;
+  }
+  const exportData = localidades.map(l => {
+    let fila = { ...l };
+    fila['Nombre'] = l.nombre; fila['Comuna'] = l.comuna;
+    if (l.codComuna) fila['CUT'] = l.codComuna;
+    fila['Latitud'] = l.lat; fila['Longitud'] = l.lon; fila['Origen'] = l.origen || 'oficial';
+    delete fila.nombre; delete fila.comuna; delete fila.lat; delete fila.lon;
+    delete fila.origen; delete fila.codComuna; delete fila.isNew;
+    return fila;
+  });
+  const wb = window.XLSX.utils.book_new();
+  const ws = window.XLSX.utils.json_to_sheet(exportData);
+  ws['!cols'] = [{wch: 25}, {wch: 20}, {wch: 10}, {wch: 15}, {wch: 15}, {wch: 15}];
+  window.XLSX.utils.book_append_sheet(wb, ws, "Maestro_Localidades");
+  const baseName = origFileName ? origFileName.split('.')[0] : 'Proyecto';
+  window.XLSX.writeFile(wb, `${baseName}_Localidades_Actualizado.xlsx`);
 }
 
 // ═══════════════════════════════════════════════════════════════
-// EXPORTACIÓN A ESRI JSON (AHORA POBLA EL DEFINITION QUERY)
+// EXPORTACIÓN A ESRI JSON (incluye campos de dirección para QA)
 // ═══════════════════════════════════════════════════════════════
 export function buildGeoJSONExport(clusters, rawData, origFileName) {
   setTimeout(() => {
     let features = [];
-    let runList = []; // 🔥 Recolector de RUNs
-    const dominios = { 'LOCALIDAD': 1, 'RURAL': 1, 'EXACTO': 2, 'CALLE': 3, 'NO GEO': 4 };
+    let runList = [];
 
     Object.values(clusters).forEach(c => {
       c.rows.forEach(r => {
-        const rawRow = rawData[r.id] || r; 
-        const tipoFinal = r.tipo || c.tipo; 
-        let finalLat, finalLon;
-
-        if (tipoFinal === 'NO GEO') {
-          finalLat = parseFloat(rawRow.latitud || rawRow.geo_lat) || null;
-          finalLon = parseFloat(rawRow.longitud || rawRow.geo_lon) || null;
-        } else {
-          finalLat = r.latFinal ? parseFloat(r.latFinal) : (parseFloat(rawRow.latitud || rawRow.geo_lat) || null);
-          finalLon = r.lonFinal ? parseFloat(r.lonFinal) : (parseFloat(rawRow.longitud || rawRow.geo_lon) || null);
-        }
+        const rawRow = rawData[r.id] || r;
+        const { lat, lon, tipo } = resolveFinalCoords(r, c, rawRow);
 
         const runValue = extractRun(rawRow);
-        if (runValue) runList.push(runValue); // Agregamos a la lista global
+        if (runValue) runList.push(runValue);
 
         let feature = {
           attributes: {
             run:         runValue,
-            tipo_geo_id: dominios[tipoFinal] || null,
-            latitud:     finalLat,
-            longitud:    finalLon,
-            // Campos de dirección para QA por el supervisor
-            calle:       String(rawRow.calle    || rawRow.CALLE    || '').trim() || null,
-            numero:      String(rawRow.numero   || rawRow.NUMERO   || '').trim() || null,
-            localidad:   String(rawRow.localidad|| rawRow.LOCALIDAD|| '').trim() || null,
-            resto:       String(rawRow.resto    || rawRow.RESTO    || '').trim() || null,
+            tipo_geo_id: DOMINIOS[tipo] || null,
+            latitud:     lat,
+            longitud:    lon,
+            calle:       field(rawRow, 'calle'),
+            numero:      field(rawRow, 'numero'),
+            localidad:   field(rawRow, 'localidad'),
+            resto:       field(rawRow, 'resto'),
           }
         };
 
-        if (finalLon !== null && !isNaN(finalLon) && finalLat !== null && !isNaN(finalLat)) {
-          feature.geometry = { x: finalLon, y: finalLat };
+        if (lon !== null && !isNaN(lon) && lat !== null && !isNaN(lat)) {
+          feature.geometry = { x: lon, y: lat };
         }
         features.push(feature);
       });
@@ -159,16 +147,7 @@ export function buildGeoJSONExport(clusters, rawData, origFileName) {
     const esriJson = {
       geometryType: "esriGeometryPoint",
       spatialReference: { wkid: 4326 },
-      fields: [
-        { name: "run",         type: "esriFieldTypeInteger", alias: "run" },
-        { name: "tipo_geo_id", type: "esriFieldTypeInteger", alias: "tipo_geo_id" },
-        { name: "latitud",     type: "esriFieldTypeDouble",  alias: "latitud" },
-        { name: "longitud",    type: "esriFieldTypeDouble",  alias: "longitud" },
-        { name: "calle",       type: "esriFieldTypeString",  alias: "calle",     length: 150 },
-        { name: "numero",      type: "esriFieldTypeString",  alias: "numero",    length: 20  },
-        { name: "localidad",   type: "esriFieldTypeString",  alias: "localidad", length: 100 },
-        { name: "resto",       type: "esriFieldTypeString",  alias: "resto",     length: 150 }
-      ],
+      fields: ESRI_FIELDS,
       features: features
     };
 
@@ -176,46 +155,35 @@ export function buildGeoJSONExport(clusters, rawData, origFileName) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${baseName}_Esri.json`; 
+    a.download = `${baseName}_Esri.json`;
     a.click();
     URL.revokeObjectURL(url);
 
-    updateRunListUI(runList); // 🔥 Actualizamos la cajita en pantalla
-  }, 150); 
+    updateRunListUI(runList);
+  }, 150);
 }
 
 // ═══════════════════════════════════════════════════════════════
-// EXPORTADOR MINIMALISTA PARA APPEND (MANTIENE LA FUNCIÓN)
+// EXPORTADOR MINIMALISTA PARA APPEND
 // ═══════════════════════════════════════════════════════════════
 export function buildAppendExport(clusters, rawData, origFileName) {
   setTimeout(() => {
     let exportData = [];
-    let runList = []; 
-    const dominios = { 'LOCALIDAD': 1, 'RURAL': 1, 'EXACTO': 2, 'CALLE': 3, 'NO GEO': 4 };
+    let runList = [];
 
     Object.values(clusters).forEach(c => {
       c.rows.forEach(r => {
         const rawRow = rawData[r.id] || r;
-        const tipoFinal = r.tipo || c.tipo;
-        let finalLat, finalLon;
-        const origLat = parseFloat(rawRow.latitud || rawRow.geo_lat) || null;
-        const origLon = parseFloat(rawRow.longitud || rawRow.geo_lon) || null;
-
-        if (tipoFinal === 'NO GEO') {
-          finalLat = origLat; finalLon = origLon;
-        } else {
-          finalLat = r.latFinal ? parseFloat(r.latFinal) : origLat;
-          finalLon = r.lonFinal ? parseFloat(r.lonFinal) : origLon;
-        }
+        const { lat, lon, tipo } = resolveFinalCoords(r, c, rawRow);
 
         const runValue = extractRun(rawRow);
         if (runValue) runList.push(runValue);
 
         exportData.push({
-          run: runValue,
-          tipo_geo_id: dominios[tipoFinal] || null,
-          latitud: finalLat,
-          longitud: finalLon
+          run:         runValue,
+          tipo_geo_id: DOMINIOS[tipo] || null,
+          latitud:     lat,
+          longitud:    lon
         });
       });
     });
@@ -231,6 +199,103 @@ export function buildAppendExport(clusters, rawData, origFileName) {
     window.XLSX.utils.book_append_sheet(wb, ws, "Append_Data");
     window.XLSX.writeFile(wb, `${baseName}_APPEND.xlsx`);
 
-    updateRunListUI(runList); // 🔥 Actualizamos la cajita en pantalla
+    updateRunListUI(runList);
+  }, 150);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXPORTACIÓN DE ENTREGA PARA QA (SIGEA) — v4.2
+// ═══════════════════════════════════════════════════════════════
+// Genera DOS archivos en un clic:
+//   1. {recinto}_ENTREGA.geojson → GeoJSON estándar (FeatureCollection de
+//      puntos WGS84). ArcGIS Pro lo abre DIRECTO como capa, sin toolbox ni
+//      creación manual de XY. Solo incluye features con coordenada válida.
+//   2. {recinto}_ENTREGA.xlsx → tabla plana que SIGEA consume por run.
+//      Incluye TODAS las filas (también las sin coordenada, para trazar
+//      pendientes).
+// Llave de match: run. Respeta la regla NO GEO vía resolveFinalCoords.
+export function buildEntregaQA(clusters, rawData, origFileName) {
+  setTimeout(() => {
+    let exportData = [];      // para el Excel (todas las filas)
+    let features   = [];      // para el GeoJSON (solo con coordenada válida)
+    let sinRun = 0, sinCoord = 0;
+
+    Object.values(clusters).forEach(c => {
+      c.rows.forEach(r => {
+        const rawRow = rawData[r.id] || r;
+        const { lat, lon, tipo } = resolveFinalCoords(r, c, rawRow);
+        const runValue = extractRun(rawRow);
+        if (!runValue) sinRun++;
+
+        const props = {
+          run:         runValue,
+          calle:       field(rawRow, 'calle'),
+          numero:      field(rawRow, 'numero'),
+          localidad:   field(rawRow, 'localidad'),
+          resto:       field(rawRow, 'resto'),
+          tipo_geo_id: DOMINIOS[tipo] || null,
+          tipo_geo:    tipo || null,
+          latitud:     lat,
+          longitud:    lon,
+          metodo:      r.metodo || c.metodo || null
+        };
+        exportData.push(props);
+
+        // GeoJSON: solo puntos con coordenada válida (ArcGIS rechaza geom nula)
+        const validLat = lat !== null && !isNaN(lat) && lat >= -90 && lat <= 90;
+        const validLon = lon !== null && !isNaN(lon) && lon >= -180 && lon <= 180;
+        if (validLat && validLon) {
+          features.push({
+            type: 'Feature',
+            geometry: { type: 'Point', coordinates: [lon, lat] }, // GeoJSON = [lon, lat]
+            properties: props
+          });
+        } else {
+          sinCoord++;
+        }
+      });
+    });
+
+    if (exportData.length === 0) {
+      alert("No hay registros para exportar.");
+      return;
+    }
+
+    const baseName = origFileName ? origFileName.split('.')[0] : 'Entrega';
+
+    // ── Archivo 1: GeoJSON estándar (WGS84 / EPSG:4326) ──────────
+    const geojson = {
+      type: 'FeatureCollection',
+      name: `${baseName}_ENTREGA`,
+      crs: { type: 'name', properties: { name: 'urn:ogc:def:crs:OGC:1.3:CRS84' } },
+      features: features
+    };
+    const gjBlob = new Blob([JSON.stringify(geojson)], { type: 'application/geo+json' });
+    const gjUrl  = URL.createObjectURL(gjBlob);
+    const gjA    = document.createElement('a');
+    gjA.href = gjUrl; gjA.download = `${baseName}_ENTREGA.geojson`; gjA.click();
+    URL.revokeObjectURL(gjUrl);
+
+    // ── Archivo 2: Excel plano para SIGEA (todas las filas) ──────
+    exportData.sort((a, b) => (a.run || 0) - (b.run || 0));
+    const ws = window.XLSX.utils.json_to_sheet(exportData);
+    ws['!cols'] = [
+      { wch: 12 }, { wch: 28 }, { wch: 10 }, { wch: 20 },
+      { wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 26 }
+    ];
+    const wb = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(wb, ws, "Entrega_QA");
+    // Pequeño delay para que las dos descargas no colisionen en el navegador
+    setTimeout(() => window.XLSX.writeFile(wb, `${baseName}_ENTREGA.xlsx`), 400);
+
+    // ── Resumen al usuario ───────────────────────────────────────
+    const usuario = (typeof localStorage !== 'undefined' && localStorage.getItem('sige_reporter_user')) || '{usuario}';
+    let msg = `✅ Entrega generada:\n\n` +
+              `📍 ${baseName}_ENTREGA.geojson — ${features.length} puntos (ArcGIS Pro directo)\n` +
+              `📊 ${baseName}_ENTREGA.xlsx — ${exportData.length} filas (SIGEA)\n` +
+              `\n📁 GUÁRDALOS EN:\ndev_007\\funcionarios\\${usuario}\\\n(tu carpeta de OneDrive — el supervisor los busca ahí)\n`;
+    if (sinCoord > 0) msg += `\n⚠️ ${sinCoord} registro(s) sin coordenada quedaron fuera del GeoJSON (sí están en el Excel como pendientes).`;
+    if (sinRun > 0)   msg += `\n⚠️ ${sinRun} registro(s) sin RUN detectable — SIGEA no podrá emparejarlos.`;
+    alert(msg);
   }, 150);
 }

@@ -1,4 +1,4 @@
-// app.js - Director de Orquesta (Controlador Principal) — v4.0 Dratini
+// app.js - Director de Orquesta (Controlador Principal) — v4.2 Dratini
 import { state } from './store.js';
 import { h, ej, sid, nd, getSimilarity } from './utils.js';
 import { normDir, preClassifyCluster, suggestMerges } from './normalizer.js';
@@ -7,8 +7,8 @@ import * as io from './io.js';
 import { saveSession, loadSession, clearSession } from './db.js';
 import * as ui from './ui.js';
 import * as core from './core.js';
-import * as SIIGeocoder from './sii-geocoder.js';
 import * as reporter from './reporter.js';
+import * as sigec from './sigec-client.js';
 
 /* CONSTANTES Y UI */
 const SFIELDS = ['calle','numero','resto','localidad','comuna','referencia','latitud','longitud'];
@@ -28,6 +28,11 @@ window.closeMM = ui.closeMM;
 window.closeLM = () => {
   const lmEl = document.getElementById('lm');
   if (lmEl) lmEl.classList.remove('draggable');
+  // Restaurar el modal a su estado de localidades (por si SIGEC lo modificó)
+  const title = document.getElementById('lm-title');
+  if (title) title.textContent = 'Localidades';
+  const details = document.querySelector('#lm details');
+  if (details) details.style.display = '';
   ui.closeLM();
 };
 window.resizeMap = mapMod.resizeMap; 
@@ -49,7 +54,6 @@ async function initApp() {
   setupDrop('dz-loc', 'fi-loc', loadLoc);
   setupDrop('dz-geojson', 'fi-geojson', loadGeoJSON);
   setupDrop('dz-recintos', 'file-recintos', loadRecintos);
-  setupDrop('dz-sii', 'fi-sii', loadSII); // ← v4.0
 
   // 📡 Reporter SIGE → SIGEA: restaurar config guardada y arrancar el timer
   const repCfg = reporter.getConfig();
@@ -60,6 +64,13 @@ async function initApp() {
   const repStatusEl = document.getElementById('reporter-status');
   if (repStatusEl && reporter.isConfigured()) { repStatusEl.className = 'api-status api-ok'; repStatusEl.textContent = 'configurado'; }
   reporter.init();
+
+  // 🔍 SIGEC: si el usuario guardó credenciales custom, reflejarlas en el modal
+  const sgCfg = sigec.getConfig();
+  const sgUrlEl = document.getElementById('sigec-url');
+  const sgKeyEl = document.getElementById('sigec-key');
+  if (sgUrlEl && localStorage.getItem('sige_sigec_url')) sgUrlEl.value = sgCfg.url;
+  if (sgKeyEl && localStorage.getItem('sige_sigec_key')) sgKeyEl.value = sgCfg.key;
 
   if (window.updateSupermenteStats) window.updateSupermenteStats();
 
@@ -121,29 +132,6 @@ function loadRecintos(f) {
   if (!f) return; const reader = new FileReader();
   reader.onload = e => { try { state.recintosPointsData = JSON.parse(e.target.result); document.getElementById('fn-recintos').textContent = f.name + ' ✓'; document.getElementById('dz-recintos').style.borderColor = '#16a34a'; } catch (err) { alert('GeoJSON inválido.'); } };
   reader.readAsText(f);
-}
-
-// ── v4.0: Carga del índice SII ──────────────────────────────────
-async function loadSII(f) {
-  if (!f) return;
-  const dz = document.getElementById('dz-sii');
-  const fn = document.getElementById('fn-sii');
-  if (fn) fn.textContent = '⏳ Descomprimiendo...';
-  if (dz) dz.style.borderColor = '#eab308';
-
-  try {
-    const meta = await SIIGeocoder.load(f);
-    state.siiLoaded = true;
-    state.siiMeta   = meta;
-    if (fn) fn.textContent = `${f.name} — ${meta.total_keys.toLocaleString()} dir. ✓`;
-    if (dz) dz.style.borderColor = '#16a34a';
-    updateSIIStatus();
-  } catch (err) {
-    if (fn) fn.textContent = '❌ Error al cargar el índice';
-    if (dz) dz.style.borderColor = '#ef4444';
-    console.error('SII load error:', err);
-    alert('Error al cargar el índice SII: ' + err.message);
-  }
 }
 
 function readXLSX(f, cb){
@@ -468,8 +456,10 @@ function renderPanel(key){
     <div class="geo-row" style="flex-direction:column;align-items:stretch;gap:7px">
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${(c.tipo==='EXACTO' || c.tipo==='CALLE') ? `<button class="btn btn-sm btn-p" onclick="window.geoNominatim('${ej(key)}')">📍 Nominatim</button>
+          <button class="btn btn-sm" style="background:#0891b2;color:#fff" onclick="window.geoSIGEC('${ej(key)}')">🔍 SIGEC</button>
           ${document.getElementById('key-gmaps')?.value.trim() ? `<button class="btn btn-sm" onclick="window.geoGoogle('${ej(key)}')">📍 Google</button>` : ''}` : ''}
-        ${c.tipo==='LOCALIDAD' ? `<button class="btn btn-sm btn-rural" onclick="window.openLM('${ej(key)}')">🏘️ Seleccionar localidad</button>` : ''}
+        ${c.tipo==='LOCALIDAD' ? `<button class="btn btn-sm btn-rural" onclick="window.openLM('${ej(key)}')">🏘️ Seleccionar localidad</button>
+          <button class="btn btn-sm" style="background:#0891b2;color:#fff" onclick="window.geoSIGEC('${ej(key)}')">🔍 SIGEC</button>` : ''}
         <span class="gstat ${c.latFinal?'gs-ok':''}" id="gstat">${c.latFinal ? (c.needsReview ? '⌛ Propuesta pendiente' : '✓ Confirmado') : 'Sin coordenada'}</span>
       </div>
       
@@ -710,29 +700,13 @@ window.renameCluster = function(oldKey){
 /* APIs */
 function setGeoStatus(type, msg){ const el = document.getElementById('gstat'); if(el) { el.className = 'gstat gs-' + type; el.textContent = msg; } }
 
-// Actualiza el badge SII en el modal de APIs
-function updateSIIStatus() {
-  const el = document.getElementById('sii-status');
-  if (!el) return;
-  if (SIIGeocoder.isLoaded()) {
-    const m = SIIGeocoder.getStats();
-    el.className = 'api-status api-ok';
-    el.textContent = `${m.total_keys.toLocaleString()} dir.`;
-  } else {
-    el.className = 'api-status api-empty';
-    el.textContent = '—';
-  }
-}
-window.updateSIIStatus = updateSIIStatus;
-
 window.updateApiStatus = function() {
   ['gmaps','here'].forEach(id => {
     const val = document.getElementById('key-'+id)?.value.trim();
     const st = document.getElementById('st-'+id);
     if(st) { st.className = 'api-status ' + (val ? 'api-ok' : 'api-empty'); st.textContent = val ? 'activo' : '—'; }
   });
-  updateSIIStatus();
-  
+
   const apiKey = document.getElementById('key-gmaps')?.value.trim();
   const coords = mapMod.getTentativeCoords();
   if (coords) mapMod.updateStreetView(coords.lat, coords.lng, apiKey);
@@ -746,22 +720,6 @@ window.updateApiStatus = function() {
 window.geoNominatim = async function(key){
   const q = document.getElementById('geo-query')?.value.trim(); if(!q) return;
 
-  // ── Intento 1: SII (local, instantáneo) ────────────────────
-  if (SIIGeocoder.isLoaded() && curC) {
-    const c = state.clusters[curC];
-    if (c) {
-      const row = c.rows[0];
-      const comunaName = core.resolveComunaName(row) || row.comuna;
-      const siiResult  = SIIGeocoder.geocode(row.callNorm || row.calle, row.numNorm || row.numero, comunaName);
-      if (siiResult) {
-        mapMod.placeTentative(siiResult.lat, siiResult.lon, true);
-        setGeoStatus('ok', `✅ SII (${siiResult.confianza})`);
-        return;
-      }
-    }
-  }
-
-  // ── Intento 2: Nominatim (online) ───────────────────────────
   setGeoStatus('run', '⏳ Buscando...');
   try {
     const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=cl`);
@@ -799,10 +757,111 @@ window.geoGoogle = async function(key){
   }
 };
 
-window.openLM = function(key){
-  lmKey = key; const c = state.clusters[key]; if(!c)return;
+// ═══════════════════════════════════════════════════════════════
+// SIGEC — Búsqueda de predios SII (urbano y rural)
+// ═══════════════════════════════════════════════════════════════
+// Abre un panel arrastrable con los resultados rankeados. Al elegir uno:
+//   · pone el centroide como coordenada tentativa (clic para confirmar)
+//   · registra la selección para que SIGEC aprenda
+let _sigecQuery = '';   // última consulta, para el feedback de aprendizaje
+let _sigecComuna = '';  // CUT usado en la última búsqueda
 
-  // Normalizador robusto: extrae solo dígitos y quita ceros a la izquierda.
+window.geoSIGEC = async function(key){
+  const c = state.clusters[key]; if(!c) return;
+  const row = c.rows[0];
+
+  // CUT normalizado (SIGEC usa código sin cero, ej '9201')
+  const normCut = v => { const m = String(v ?? '').match(/\d+/); return m ? m[0].replace(/^0+/, '') : ''; };
+  const cut = normCut(row.codComuna) || normCut(row.comuna);
+  if (!cut) { alert('Este cluster no tiene código de comuna (CUT) para consultar SIGEC.'); return; }
+
+  // Query: para urbano usa calle+número; para rural, la localidad o la calle
+  let query = document.getElementById('geo-query')?.value.trim();
+  if (!query) {
+    query = [row.callNorm || row.calle, row.numNorm || row.numero].filter(Boolean).join(' ').trim();
+    if (!query) query = String(row.localidad || row.calle || '').trim();
+  }
+  if (!query) { alert('No hay texto de dirección para buscar en SIGEC.'); return; }
+
+  _sigecQuery = query;
+  _sigecComuna = cut;
+  openSIGECPanel(key);
+  setSIGECBody('<div style="padding:18px;text-align:center;color:var(--tx3)">⏳ Buscando en SIGEC…</div>');
+
+  try {
+    const resultados = await sigec.buscar(cut, query, { limite: 25 });
+    if (!resultados.length) {
+      setSIGECBody(`<div style="padding:14px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;">
+        Sin coincidencias en SIGEC para <b>${h(query)}</b> (comuna ${h(cut)}).<br>Prueba con menos texto o revisa la ortografía.</div>`);
+      return;
+    }
+    renderSIGECResults(resultados);
+  } catch (e) {
+    setSIGECBody(`<div style="padding:14px;color:#dc2626;font-size:12px;">❌ Error al consultar SIGEC:<br>${h(e.message)}</div>`);
+  }
+};
+
+function openSIGECPanel(key){
+  lmKey = key; // reutilizamos el ancla del modal de localidades
+  document.getElementById('lm-title').textContent = '🔍 SIGEC — predios SII';
+  // Ocultar el bloque "crear localidad manual" si estamos en modo urbano
+  const c = state.clusters[key];
+  const picker = document.getElementById('lm-picker');
+  if (picker) picker.innerHTML = '';
+  const details = document.querySelector('#lm details');
+  if (details) details.style.display = (c && c.tipo === 'LOCALIDAD') ? '' : 'none';
+
+  const lmEl = document.getElementById('lm');
+  lmEl.classList.add('draggable');
+  lmEl.classList.add('on');
+  if (window.initLMDrag) window.initLMDrag();
+}
+
+function setSIGECBody(html){
+  const picker = document.getElementById('lm-picker');
+  if (picker) picker.innerHTML = html;
+}
+
+function renderSIGECResults(resultados){
+  window._sigecResults = resultados;
+  const filtro = `<input class="sinput" id="sigec-q" placeholder="Filtrar resultados…" oninput="window.filterSIGEC()" style="width:100%;margin-bottom:6px;">`;
+  const info = `<div style="font-size:11px;color:var(--tx3);margin-bottom:6px;">${resultados.length} predios — clic para usar su centroide</div>`;
+  setSIGECBody(filtro + info + `<div class="loc-list" id="sigec-list">${sigecItems(resultados)}</div>`);
+}
+
+function sigecItems(list){
+  if (!list || !list.length) return '<div style="padding:14px;text-align:center;color:var(--tx3);font-size:12px;">— sin resultados —</div>';
+  return list.map((r, i) => {
+    const score = Math.round((r.score || 0) * 100);
+    const dest = r.destino ? ` · ${h(r.destino)}` : '';
+    return `<div class="loc-item" onclick="window.applySIGEC(${i})" style="display:flex;justify-content:space-between;gap:8px;align-items:center">
+      <span><b>${h(r.direccion || '(sin dirección)')}</b><br><span style="font-size:10px;color:var(--tx3)">rol ${h(r.rol || '—')}${dest} · ${r.matchMethod || ''}</span></span>
+      <span style="font-size:10px;color:#0891b2;font-weight:600;flex-shrink:0">${score}%</span>
+    </div>`;
+  }).join('');
+}
+
+window.filterSIGEC = function(){
+  const q = nd((document.getElementById('sigec-q')?.value || '').toLowerCase());
+  const all = window._sigecResults || [];
+  const filtered = q ? all.filter(r => nd(String(r.direccion || '').toLowerCase()).includes(q)) : all;
+  const el = document.getElementById('sigec-list');
+  if (el) el.innerHTML = sigecItems(filtered);
+};
+
+window.applySIGEC = function(idx){
+  const r = (window._sigecResults || [])[idx];
+  if (!r || r.lat == null || r.lon == null) return;
+
+  // Cierra el panel y deja el pin tentativo para que el analista confirme
+  window.closeLM();
+  mapMod.placeTentative(parseFloat(r.lat), parseFloat(r.lon), true);
+  setGeoStatus('ok', `🔍 SIGEC: ${r.direccion || r.rol || ''}`.trim());
+
+  // Feedback de aprendizaje (no bloquea)
+  sigec.registrarSeleccion(_sigecQuery, _sigecComuna, r.rol);
+};
+
   // Hace que "09201", "9201", "09201.0" y " 9201 " coincidan todos como "9201".
   const normCut = v => {
     if (v === null || v === undefined) return '';
@@ -859,13 +918,13 @@ window.openLM = function(key){
   const lmEl = document.getElementById('lm');
   lmEl.classList.add('draggable');   // sin overlay, movible
   lmEl.classList.add('on');
-  initLMDrag();
+  window.initLMDrag();
 };
 
 // ── Modal de localidades arrastrable ────────────────────────────
 // Permite mover el modal para leer las direcciones que quedan debajo.
 // La posición se recuerda durante la sesión (window._lmPos).
-function initLMDrag() {
+window.initLMDrag = function initLMDrag() {
   const modal = document.querySelector('#lm .modal');
   const handle = document.querySelector('#lm .mh');
   if (!modal || !handle || handle._dragInit) return;
@@ -981,9 +1040,14 @@ window.gs = function(n, force = false){
 window.exportGeoJSON = () => { io.buildGeoJSONExport(state.clusters, state.rawData, state.origFileName); reporter.pushReport('export', true); };
 window.exportLocs = () => { io.buildLocsExport(state.localidades, state.origFileName); };
 window.exportAppend = () => { io.buildAppendExport(state.clusters, state.rawData, state.origFileName); reporter.pushReport('export', true); };
+window.exportEntregaQA = () => { io.buildEntregaQA(state.clusters, state.rawData, state.origFileName); reporter.pushReport('export', true); };
 
-// 📡 Reporter SIGE → SIGEA (modal ⚙) — usuario + token guardados en localStorage de este PC
-window.saveReporterConfig = function() {
+// 🔍 SIGEC (modal ⚙) — credenciales opcionales; por defecto ya funciona
+window.saveSigecConfig = function() {
+  const url = document.getElementById('sigec-url')?.value || '';
+  const key = document.getElementById('sigec-key')?.value || '';
+  sigec.saveConfig(url, key);
+};
   const user  = document.getElementById('reporter-user')?.value || '';
   const token = document.getElementById('reporter-token')?.value || '';
   reporter.saveConfig(user, token);
@@ -1282,20 +1346,20 @@ window.triggerRecintoHighlight = function(lat, lon) {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// MOTOR AUTO-URBANOS v4.0 — SII primero, Nominatim como fallback
+// MOTOR AUTO-URBANOS v4.2 — SIGEC primero, Nominatim como fallback
 // ═══════════════════════════════════════════════════════════════
 window.startBatchUrban = async function() {
   const btn = document.getElementById('btn-batch');
   if (!btn) return;
 
   const maxRowsStr = prompt("¿Cuál es la cantidad máxima de registros por cluster que deseas procesar en automático?", "1");
-  if (maxRowsStr === null) return; 
+  if (maxRowsStr === null) return;
   const maxRows = parseInt(maxRowsStr) || 1;
 
-  const candidatos = Object.values(state.clusters).filter(c => 
-    !c.tipo && 
-    !c.autoVal && 
-    c.rows.length <= maxRows && 
+  const candidatos = Object.values(state.clusters).filter(c =>
+    !c.tipo &&
+    !c.autoVal &&
+    c.rows.length <= maxRows &&
     c.tipoPropuesto === 'URBANO'
   );
 
@@ -1303,46 +1367,60 @@ window.startBatchUrban = async function() {
     return alert(`No hay clusters urbanos pendientes de hasta ${maxRows} registro(s) para procesar.`);
   }
 
-  const siiActivo = SIIGeocoder.isLoaded();
-  const tiempoEst = siiActivo 
-    ? '< 1 min (SII local + Nominatim para los no encontrados)'
+  const sigecActivo = sigec.isAvailable();
+  const tiempoEst = sigecActivo
+    ? '< 1 min (SIGEC + Nominatim para los no encontrados)'
     : `~${Math.ceil((candidatos.length * 1.5) / 60)} min (solo Nominatim)`;
 
-  if (!confirm(`Se encontraron ${candidatos.length} candidatos (de hasta ${maxRows} registros).\n\n${siiActivo ? '🏠 Índice SII activo — se usará primero (instantáneo).\n' : '⚠️ Sin índice SII — solo Nominatim (lento).\n'}\nTiempo estimado: ${tiempoEst}\n\n¿Iniciar?`)) return;
+  if (!confirm(`Se encontraron ${candidatos.length} candidatos (de hasta ${maxRows} registros).\n\n${sigecActivo ? '🔍 SIGEC activo — se usará primero (predios SII de Araucanía).\n' : '⚠️ SIGEC no disponible — solo Nominatim.\n'}\nTiempo estimado: ${tiempoEst}\n\nTodos los resultados quedan "por revisar" para tu confirmación.\n\n¿Iniciar?`)) return;
 
   btn.disabled = true;
-  let exitososSII = 0, exitososNominatim = 0, nominatimQueue = [];
+  let exitososSIGEC = 0, exitososNominatim = 0, nominatimQueue = [];
 
-  // ── PASADA 1: SII (instantánea) ─────────────────────────────
-  if (siiActivo) {
-    for (const c of candidatos) {
-      const row       = c.rows[0];
-      const comunaName = core.resolveComunaName(row) || row.comuna;
-      const siiResult  = SIIGeocoder.geocode(row.callNorm || row.calle, row.numNorm || row.numero, comunaName);
+  // Normalizador de CUT (SIGEC usa código sin cero, ej '9201')
+  const normCut = v => { const m = String(v ?? '').match(/\d+/); return m ? m[0].replace(/^0+/, '') : ''; };
 
-      if (siiResult) {
-        c.tipo      = row.numNorm ? 'EXACTO' : 'CALLE';
-        c.latFinal  = siiResult.lat;
-        c.lonFinal  = siiResult.lon;
-        c.metodo    = siiResult.metodo;
-        c.confianza = siiResult.confianza;
-        // SII exacto se confirma automáticamente; par/calle va a revisión
-        c.needsReview = (siiResult.confianza !== 'sii_exacto');
-        c.rows.forEach(r => {
-          r.tipo = c.tipo; r.latFinal = c.latFinal; r.lonFinal = c.lonFinal;
-          r.metodo = c.metodo; r.needsReview = c.needsReview;
-        });
-        exitososSII++;
-      } else {
-        nominatimQueue.push(c); // No encontrado en SII → cola para Nominatim
+  // ── PASADA 1: SIGEC ─────────────────────────────────────────
+  if (sigecActivo) {
+    for (let i = 0; i < candidatos.length; i++) {
+      const c = candidatos[i];
+      const row = c.rows[0];
+      const cut = normCut(row.codComuna) || normCut(row.comuna);
+      const query = [row.callNorm || row.calle, row.numNorm || row.numero].filter(Boolean).join(' ').trim();
+
+      btn.innerHTML = `⏳ SIGEC ${i + 1}/${candidatos.length}...`;
+
+      if (!cut || !query) { nominatimQueue.push(c); continue; }
+
+      try {
+        const resultados = await sigec.buscar(cut, query, { limite: 1 });
+        if (resultados && resultados.length > 0 && resultados[0].lat != null) {
+          const best = resultados[0];
+          c.tipo      = row.numNorm ? 'EXACTO' : 'CALLE';
+          c.latFinal  = parseFloat(best.lat);
+          c.lonFinal  = parseFloat(best.lon);
+          c.metodo    = `Auto-SIGEC · ${best.direccion || best.rol || ''}`.trim();
+          c.confianza = 'sigec';
+          c.needsReview = true;   // SIGEC es fuzzy → siempre revisar
+          c.rows.forEach(r => {
+            r.tipo = c.tipo; r.latFinal = c.latFinal; r.lonFinal = c.lonFinal;
+            r.metodo = c.metodo; r.needsReview = true;
+          });
+          exitososSIGEC++;
+        } else {
+          nominatimQueue.push(c);  // sin match en SIGEC → cola para Nominatim
+        }
+      } catch (e) {
+        console.warn('SIGEC batch falló para:', query, e.message);
+        nominatimQueue.push(c);
       }
     }
-    btn.innerHTML = `⏳ SII: ${exitososSII} hits, ${nominatimQueue.length} para Nominatim...`;
+    btn.innerHTML = `⏳ SIGEC: ${exitososSIGEC} hits, ${nominatimQueue.length} para Nominatim...`;
   } else {
     nominatimQueue = [...candidatos];
   }
 
-  // ── PASADA 2: Nominatim para los que SII no resolvió ────────
+  // ── PASADA 2: Nominatim para los que SIGEC no resolvió ──────
   for (let i = 0; i < nominatimQueue.length; i++) {
     const c = nominatimQueue[i];
     btn.innerHTML = `⏳ Nominatim ${i + 1}/${nominatimQueue.length}...`;
@@ -1386,14 +1464,12 @@ window.startBatchUrban = async function() {
   if (curC && state.clusters[curC]) renderPanel(curC);
   window.autoSave();
 
-  const siiConfirmados = candidatos.filter(c => c.metodo?.startsWith('SII') && c.confianza === 'sii_exacto').length;
-  const siiRevision    = exitososSII - siiConfirmados;
   alert(
     `✅ Proceso completado.\n\n` +
-    `🏠 SII exacto (auto-confirmados): ${siiConfirmados}\n` +
-    `🏠 SII aprox./calle (por revisar): ${siiRevision}\n` +
-    `🌍 Nominatim (por revisar): ${exitososNominatim}\n\n` +
-    `⚠️ Los registros marcados "Por revisar" necesitan confirmación manual.`
+    `🔍 SIGEC (por revisar): ${exitososSIGEC}\n` +
+    `🌍 Nominatim (por revisar): ${exitososNominatim}\n` +
+    `❓ Sin resultado: ${candidatos.length - exitososSIGEC - exitososNominatim}\n\n` +
+    `⚠️ Todos los registros geocodificados quedan "Por revisar" y necesitan tu confirmación manual.`
   );
 };
 
