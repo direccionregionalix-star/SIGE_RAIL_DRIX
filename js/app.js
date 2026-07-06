@@ -248,8 +248,6 @@ function normalizeData(){
     };
   });
 
-  // ... (deja el resto de la función intacto desde "state.clusters = {};" hacia abajo)
-
   state.clusters = {};
   state.records.forEach(r => {
     if(!state.clusters[r.clave]) state.clusters[r.clave] = { key:r.clave, rows:[], flagged:new Set(), tipo:null, latFinal:null, lonFinal:null, metodo:null, confianza:null, autoVal:false };
@@ -862,6 +860,10 @@ window.applySIGEC = function(idx){
   sigec.registrarSeleccion(_sigecQuery, _sigecComuna, r.rol);
 };
 
+window.openLM = function(key) {
+  const c = state.clusters[key];
+  if (!c) return;
+
   // Hace que "09201", "9201", "09201.0" y " 9201 " coincidan todos como "9201".
   const normCut = v => {
     if (v === null || v === undefined) return '';
@@ -1048,6 +1050,8 @@ window.saveSigecConfig = function() {
   const key = document.getElementById('sigec-key')?.value || '';
   sigec.saveConfig(url, key);
 };
+
+window.saveReporterConfig = function() {
   const user  = document.getElementById('reporter-user')?.value || '';
   const token = document.getElementById('reporter-token')?.value || '';
   reporter.saveConfig(user, token);
