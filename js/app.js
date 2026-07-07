@@ -1,4 +1,4 @@
-// app.js - Director de Orquesta (Controlador Principal) — v4.2 Dratini
+// app.js - Director de Orquesta (Controlador Principal) — v4.3 Dratini
 import { state } from './store.js';
 import { h, ej, sid, nd, getSimilarity } from './utils.js';
 import { normDir, preClassifyCluster, suggestMerges } from './normalizer.js';
@@ -28,7 +28,6 @@ window.closeMM = ui.closeMM;
 window.closeLM = () => {
   const lmEl = document.getElementById('lm');
   if (lmEl) lmEl.classList.remove('draggable');
-  // Restaurar el modal a su estado de localidades (por si SIGEC lo modificó)
   const title = document.getElementById('lm-title');
   if (title) title.textContent = 'Localidades';
   const details = document.querySelector('#lm details');
@@ -48,6 +47,34 @@ window.autoSave = async function() {
   } catch(e) { console.warn("Autoguardado falló", e); }
 };
 
+// 🛡️ BOTÓN DE PÁNICO (Ctrl+S / Ctrl+G): guardado manual con confirmación
+// EXPLÍCITA. A diferencia de autoSave (parpadeo sutil), este avisa al usuario
+// que su trabajo quedó a salvo — la regla de jmedina: nunca perder trabajo en
+// silencio. Reutiliza la misma persistencia en IndexedDB.
+window.manualSave = async function() {
+  const btnState = document.getElementById('save-ind');
+  try {
+    await saveSession(state);
+    if (btnState) {
+      btnState.classList.add('vis');
+      setTimeout(() => btnState.classList.remove('vis'), 2500);
+    }
+    // Confirmación clara y no intrusiva (se desvanece sola si existe el toast)
+    const toast = document.getElementById('save-toast');
+    if (toast) {
+      toast.textContent = '💾 Progreso guardado';
+      toast.classList.add('on');
+      setTimeout(() => toast.classList.remove('on'), 2000);
+    } else {
+      console.info('💾 Progreso guardado manualmente');
+    }
+  } catch (e) {
+    // Un guardado de emergencia que falla DEBE ser ruidoso, nunca silencioso
+    console.error('Guardado manual falló:', e);
+    alert('⚠️ No se pudo guardar el progreso. Exporta un respaldo (.json o Excel) antes de cerrar, para no perder tu trabajo.');
+  }
+};
+
 /* INICIALIZACIÓN */
 async function initApp() {
   setupDrop('dz-main', 'fi-main', loadMain);
@@ -55,7 +82,6 @@ async function initApp() {
   setupDrop('dz-geojson', 'fi-geojson', loadGeoJSON);
   setupDrop('dz-recintos', 'file-recintos', loadRecintos);
 
-  // 📡 Reporter SIGE → SIGEA: restaurar config guardada y arrancar el timer
   const repCfg = reporter.getConfig();
   const repUserEl  = document.getElementById('reporter-user');
   const repTokenEl = document.getElementById('reporter-token');
@@ -65,7 +91,6 @@ async function initApp() {
   if (repStatusEl && reporter.isConfigured()) { repStatusEl.className = 'api-status api-ok'; repStatusEl.textContent = 'configurado'; }
   reporter.init();
 
-  // 🔍 SIGEC: si el usuario guardó credenciales custom, reflejarlas en el modal
   const sgCfg = sigec.getConfig();
   const sgUrlEl = document.getElementById('sigec-url');
   const sgKeyEl = document.getElementById('sigec-key');
@@ -198,7 +223,6 @@ window.startProcess = function(){
 window.applyMap = function(){ SFIELDS.forEach(f=>{ state.colMap[f]=document.getElementById('m_'+f)?.value||''; }); normalizeData(); };
 
 function normalizeData(){
-  // 🧠 PIEDRA ROSETTA: Traductor automático de CUT a Nombre usando el GeoJSON
   const dictComunas = {};
   if (state.referenceGeoJSON && state.referenceGeoJSON.features) {
       state.referenceGeoJSON.features.forEach(f => {
@@ -210,8 +234,8 @@ function normalizeData(){
               if (kCut && kNom && p[kCut] && p[kNom]) {
                   const cutVal = String(p[kCut]).trim();
                   const nomVal = String(p[kNom]).trim().toUpperCase();
-                  dictComunas[cutVal] = nomVal; // Guarda "09101" -> "TEMUCO"
-                  dictComunas[parseInt(cutVal, 10).toString()] = nomVal; // Guarda "9101" -> "TEMUCO"
+                  dictComunas[cutVal] = nomVal;
+                  dictComunas[parseInt(cutVal, 10).toString()] = nomVal;
               }
           }
       });
@@ -224,23 +248,22 @@ function normalizeData(){
     const calle=g('calle'), numero=g('numero'), resto=g('resto');
     const { callNorm, numNorm, clave } = normDir(calle, numero); 
     
-    // 🛡️ ESCUDO ANTI-EXCEL: Traducir el CUT ingresado al nombre real
     let rawComuna = g('comuna').trim().toUpperCase();
     let comunaTraducida = rawComuna;
     
     if (dictComunas[rawComuna]) {
-        comunaTraducida = dictComunas[rawComuna]; // Si hace match directo
+        comunaTraducida = dictComunas[rawComuna];
     } else {
         const rawNum = parseInt(rawComuna, 10).toString();
-        if (dictComunas[rawNum]) comunaTraducida = dictComunas[rawNum]; // Si hace match quitando el cero
+        if (dictComunas[rawNum]) comunaTraducida = dictComunas[rawNum];
     }
 
     return {
       id: i, original: [calle,numero,resto].filter(Boolean).join(' '),
       calle, numero, resto, localidad: g('localidad'), 
-      comuna: comunaTraducida, // <-- Se guarda "TEMUCO", no "9101"
+      comuna: comunaTraducida,
       ref: g('referencia'),
-      codComuna: cutCol ? String(row[cutCol]||'').trim() : rawComuna, // Respaldamos el CUT original aquí
+      codComuna: cutCol ? String(row[cutCol]||'').trim() : rawComuna,
       callNorm, numNorm, clave: String(row[SCOLS[0]]||clave).trim(),
       latBase: parseFloat(g('latitud'))||null, lonBase: parseFloat(g('longitud'))||null,
       tipo: String(row[SCOLS[1]]||'').trim()||null, latFinal: parseFloat(row[SCOLS[2]])||null, lonFinal: parseFloat(row[SCOLS[3]])||null,
@@ -256,7 +279,6 @@ function normalizeData(){
     if(r.latFinal && !c.latFinal) { c.latFinal=r.latFinal; c.lonFinal=r.lonFinal; c.metodo=r.metodo; c.confianza=r.confianza; }
   });
 
-  // 🧠 INYECCIÓN ZERG: Clasificación y Cacería en la Supermente
   Object.values(state.clusters).forEach(c => {
       preClassifyCluster(c);
       
@@ -331,18 +353,16 @@ window.onCoordChange = function(lat, lon) {
   const hint = document.getElementById('mhint');
   if (hint) hint.textContent = 'Arrastra el marcador o confirma el punto';
   
-  // 📏 EL ODÓMETRO TÁCTICO
   let distMsg = '';
   if (curC && state.clusters[curC] && window.turf) {
       const c = state.clusters[curC];
-      // Buscamos el punto de origen: la coordenada que ya tenía el cluster, o la latBase/lonBase que venía en el Excel
       let origLat = c.latFinal || (c.rows.length > 0 ? c.rows[0].latBase : null);
       let origLon = c.lonFinal || (c.rows.length > 0 ? c.rows[0].lonBase : null);
       
       if (origLat && origLon) {
           const dist = turf.distance([origLon, origLat], [lon, lat], {units: 'meters'});
-          if (dist > 2) { // Solo lo mostramos si se movió más de 2 metros para no generar ruido
-              const color = dist > 1000 ? '#ef4444' : (dist > 100 ? '#eab308' : '#a855f7'); // Rojo si es > 1km, Amarillo > 100m, Morado cerca
+          if (dist > 2) {
+              const color = dist > 1000 ? '#ef4444' : (dist > 100 ? '#eab308' : '#a855f7');
               distMsg = `<span style="margin-left: 10px; font-size: 11px; color: ${color}; font-weight: bold; background: ${color}1a; padding: 2px 6px; border-radius: 4px;">📏 Desplazamiento: ${dist > 1000 ? (dist/1000).toFixed(2) + ' km' : Math.round(dist) + ' m'}</span>`;
           }
       }
@@ -387,7 +407,6 @@ window.openC = function(key){
   if(c) {
     mapMod.loadClusterMap(c.latFinal, c.lonFinal, c.metodo, c.rows); 
     
-    // 📍 Buscar si hay coordenadas para forzar Street View y el análisis de recintos
     let lat = c.latFinal, lon = c.lonFinal;
     if (!lat && c.rows && c.rows.length > 0) { 
         const r = c.rows.find(x => x.latBase && x.lonBase); 
@@ -396,7 +415,6 @@ window.openC = function(key){
     
     window.triggerRecintoHighlight(lat, lon);
     
-    // Forzamos a Street View a actualizarse de inmediato
     const apiKey = document.getElementById('key-gmaps')?.value.trim();
     if (lat && lon) {
         mapMod.updateStreetView(lat, lon, apiKey);
@@ -416,7 +434,6 @@ function renderPanel(key){
   const fc = c.flagged ? c.flagged.size : 0;
   const fusInfo = c.autoMerged ? `<span style="font-size:10px; background:#fef3c7; padding: 2px 8px; margin-left:8px;">⚠️ AUTO-FUSIÓN</span>` : '';
   
-  // 📍 ARMADO INTELIGENTE DE LA QUERY (Filtro Anti-Nulls + Campo Resto)
   const ref = c.rows[0];
   const comunaName = core.resolveComunaName(ref);
   
@@ -488,7 +505,6 @@ window.acceptSM = function(key) {
     const c = state.clusters[key];
     if (!c || !c.smMatch) return;
 
-    // 1. Heredar el ADN espacial
     const matchData = c.smMatch.data;
     c.latFinal = matchData.latFinal;
     c.lonFinal = matchData.lonFinal;
@@ -504,7 +520,6 @@ window.acceptSM = function(key) {
         r.needsReview = false;
     });
 
-    // 2. Expandir la mente (Agregar el nombre del excel a los alias del UUID histórico)
     const uuid = c.smMatch.id;
     let existingData = JSON.parse(localStorage.getItem(uuid));
     if (existingData && Array.isArray(existingData.aliases)) {
@@ -516,18 +531,15 @@ window.acceptSM = function(key) {
         }
     }
 
-    // Limpiamos la sugerencia temporal para dejar la UI limpia
     c.smMatch = null;
     c.smMessage = null;
 
-    // 3. Flujo visual
     mapMod.loadClusterMap(c.latFinal, c.lonFinal, c.metodo, c.rows);
     renderFUList();
     updateProg();
     renderPanel(key);
     window.autoSave();
     
-    // Auto-navegar al siguiente después de asimilar
     setTimeout(() => window.nextPend(), 350);
 };
 
@@ -546,7 +558,6 @@ window.nextPend = function(){
   const l = Object.values(state.clusters).filter(c=>(!c.tipo||c.needsReview)&&!c.autoVal).sort((a,b)=>b.rows.length-a.rows.length);
   if(!l.length) return alert('¡Todos revisados o clasificados!');
   
-  // Le damos un micro-descanso de 50ms al DOM para que el mapa pueda hacer el Zoom correcto
   setTimeout(() => window.openC(l[0].key), 50);
 };
 
@@ -743,7 +754,6 @@ window.geoGoogle = async function(key){
     
     if(data.status === 'OK' && data.results && data.results.length > 0){ 
       const loc = data.results[0].geometry.location;
-      // Usamos los datos de Google para poner el marcador tentativo
       mapMod.placeTentative(parseFloat(loc.lat), parseFloat(loc.lng), true); 
       setGeoStatus('ok', '✅ Google OK'); 
     } 
@@ -755,25 +765,17 @@ window.geoGoogle = async function(key){
   }
 };
 
-// ═══════════════════════════════════════════════════════════════
-// SIGEC — Búsqueda de predios SII (urbano y rural)
-// ═══════════════════════════════════════════════════════════════
-// Abre un panel arrastrable con los resultados rankeados. Al elegir uno:
-//   · pone el centroide como coordenada tentativa (clic para confirmar)
-//   · registra la selección para que SIGEC aprenda
-let _sigecQuery = '';   // última consulta, para el feedback de aprendizaje
-let _sigecComuna = '';  // CUT usado en la última búsqueda
+let _sigecQuery = '';
+let _sigecComuna = '';
 
 window.geoSIGEC = async function(key){
   const c = state.clusters[key]; if(!c) return;
   const row = c.rows[0];
 
-  // CUT normalizado (SIGEC usa código sin cero, ej '9201')
   const normCut = v => { const m = String(v ?? '').match(/\d+/); return m ? m[0].replace(/^0+/, '') : ''; };
   const cut = normCut(row.codComuna) || normCut(row.comuna);
   if (!cut) { alert('Este cluster no tiene código de comuna (CUT) para consultar SIGEC.'); return; }
 
-  // Query: para urbano usa calle+número; para rural, la localidad o la calle
   let query = document.getElementById('geo-query')?.value.trim();
   if (!query) {
     query = [row.callNorm || row.calle, row.numNorm || row.numero].filter(Boolean).join(' ').trim();
@@ -800,9 +802,8 @@ window.geoSIGEC = async function(key){
 };
 
 function openSIGECPanel(key){
-  lmKey = key; // reutilizamos el ancla del modal de localidades
+  lmKey = key;
   document.getElementById('lm-title').textContent = '🔍 SIGEC — predios SII';
-  // Ocultar el bloque "crear localidad manual" si estamos en modo urbano
   const c = state.clusters[key];
   const picker = document.getElementById('lm-picker');
   if (picker) picker.innerHTML = '';
@@ -851,20 +852,16 @@ window.applySIGEC = function(idx){
   const r = (window._sigecResults || [])[idx];
   if (!r || r.lat == null || r.lon == null) return;
 
-  // Cierra el panel y deja el pin tentativo para que el analista confirme
   window.closeLM();
   mapMod.placeTentative(parseFloat(r.lat), parseFloat(r.lon), true);
   setGeoStatus('ok', `🔍 SIGEC: ${r.direccion || r.rol || ''}`.trim());
 
-  // Feedback de aprendizaje (no bloquea)
   sigec.registrarSeleccion(_sigecQuery, _sigecComuna, r.rol);
 };
 
-window.openLM = function(key) {
-  const c = state.clusters[key];
-  if (!c) return;
+window.openLM = function(key){
+  lmKey = key; const c = state.clusters[key]; if(!c)return;
 
-  // Hace que "09201", "9201", "09201.0" y " 9201 " coincidan todos como "9201".
   const normCut = v => {
     if (v === null || v === undefined) return '';
     const m = String(v).match(/\d+/);
@@ -872,20 +869,16 @@ window.openLM = function(key) {
   };
 
   const row = c.rows[0] || {};
-  // El cluster puede tener el código en r.comuna o r.codComuna, en cualquier formato
   const cutActivo = normCut(row.codComuna) || normCut(row.comuna);
   const nomComuna = core.resolveComunaName(row);
 
   document.getElementById('lm-comuna').value = nomComuna;
   document.getElementById('lm-coords').value = mapMod.lastTentLat ? `${mapMod.lastTentLat.toFixed(6)}, ${mapMod.lastTentLon.toFixed(6)}` : '';
 
-  // Filtrado tolerante: comparamos por código normalizado y, como respaldo,
-  // por nombre de comuna (útil cuando el Excel del usuario trae el texto en vez del CUT)
   const nomActivoNorm = nd(String(nomComuna || '').toLowerCase().trim());
   const locsFiltradas = state.localidades.filter(l => {
     const locCut = normCut(l.codComuna);
     if (cutActivo && locCut && locCut === cutActivo) return true;
-    // Respaldo por nombre si no hay match por código
     const locNom = nd(String(l.comuna || '').toLowerCase().trim());
     if (nomActivoNorm && locNom && locNom === nomActivoNorm) return true;
     return false;
@@ -893,18 +886,6 @@ window.openLM = function(key) {
 
   window._currentFilteredLocs = locsFiltradas;
 
-  // 🔍 DEBUG: mostrar en consola los valores exactos para diagnosticar mismatches de CUT
-  console.group('🔍 openLM — diagnóstico de localidades');
-  console.log('Cluster:', key);
-  console.log('row.comuna:', row.comuna, '| row.codComuna:', row.codComuna);
-  console.log('cutActivo (normalizado):', cutActivo);
-  console.log('nomComuna resuelto:', nomComuna, '| nomActivoNorm:', nomActivoNorm);
-  console.log('Total localidades en state:', state.localidades.length);
-  console.log('Muestra CUTs en localidades:', state.localidades.slice(0,5).map(l => ({ nombre: l.nombre, codComuna: l.codComuna, codNorm: (String(l.codComuna||'').match(/\d+/)||[''])[0].replace(/^0+/,''), comuna: l.comuna })));
-  console.log('Localidades filtradas para esta comuna:', locsFiltradas.length);
-  console.groupEnd();
-
-  // Mensaje informativo si no hay coincidencias, para que el usuario sepa por qué está vacío
   const headerInfo = locsFiltradas.length > 0
     ? `<div style="font-size:11px;color:var(--tx3);margin-bottom:6px;">${locsFiltradas.length} localidades en <strong>${h(nomComuna || 'esta comuna')}</strong></div>`
     : `<div style="font-size:11px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;padding:6px 8px;border-radius:6px;margin-bottom:6px;">
@@ -918,21 +899,18 @@ window.openLM = function(key) {
      <div class="loc-list" id="loc-list">${renderLocItems(locsFiltradas.slice(0, 100))}</div>`;
 
   const lmEl = document.getElementById('lm');
-  lmEl.classList.add('draggable');   // sin overlay, movible
+  lmEl.classList.add('draggable');
   lmEl.classList.add('on');
   window.initLMDrag();
 };
 
 // ── Modal de localidades arrastrable ────────────────────────────
-// Permite mover el modal para leer las direcciones que quedan debajo.
-// La posición se recuerda durante la sesión (window._lmPos).
 window.initLMDrag = function initLMDrag() {
   const modal = document.querySelector('#lm .modal');
   const handle = document.querySelector('#lm .mh');
   if (!modal || !handle || handle._dragInit) return;
   handle._dragInit = true;
 
-  // Restaurar última posición o centrar la primera vez
   if (window._lmPos) {
     modal.style.left = window._lmPos.left + 'px';
     modal.style.top  = window._lmPos.top  + 'px';
@@ -945,7 +923,6 @@ window.initLMDrag = function initLMDrag() {
   let dragging = false, offX = 0, offY = 0;
 
   const onDown = (e) => {
-    // Ignorar clics en el botón de cerrar
     if (e.target.closest('.mclose')) return;
     dragging = true;
     const r = modal.getBoundingClientRect();
@@ -958,7 +935,6 @@ window.initLMDrag = function initLMDrag() {
   const onMove = (e) => {
     if (!dragging) return;
     const pt = e.touches ? e.touches[0] : e;
-    // Mantener el modal dentro de la ventana
     const maxX = window.innerWidth  - modal.offsetWidth;
     const maxY = window.innerHeight - modal.offsetHeight;
     const left = Math.min(Math.max(0, pt.clientX - offX), Math.max(0, maxX));
@@ -1006,7 +982,6 @@ window.saveNewLoc = function() {
   let [lat, lon] = parts;
   if (Math.abs(lat) > 80 && Math.abs(lon) < 80) [lat, lon] = [lon, lat];
 
-  // Mismo normalizador que usa openLM, para que la nueva localidad sea visible al reabrir
   const normCut = v => {
     if (v === null || v === undefined) return '';
     const m = String(v).match(/\d+/);
@@ -1044,7 +1019,6 @@ window.exportLocs = () => { io.buildLocsExport(state.localidades, state.origFile
 window.exportAppend = () => { io.buildAppendExport(state.clusters, state.rawData, state.origFileName); reporter.pushReport('export', true); };
 window.exportEntregaQA = () => { io.buildEntregaQA(state.clusters, state.rawData, state.origFileName); reporter.pushReport('export', true); };
 
-// 🔍 SIGEC (modal ⚙) — credenciales opcionales; por defecto ya funciona
 window.saveSigecConfig = function() {
   const url = document.getElementById('sigec-url')?.value || '';
   const key = document.getElementById('sigec-key')?.value || '';
@@ -1088,28 +1062,22 @@ window.updateSupermenteStats = () => {
   const el = document.getElementById('sm-stats');
   if (el) el.textContent = `Conocimiento asimilado: ${count} ubicaciones exactas.`;
 };
-// ═══════════════════════════════════════════════════════════════
-// 💾 SISTEMA DE RESPALDO Y PORTABILIDAD "LLÉVAME PA' LA CASA"
-// ═══════════════════════════════════════════════════════════════
 
-// 1. EXCEL DE RESPALDO: Inyecta coordenadas al Excel original [Manual 4.4]
 window.exportBackupExcel = function() {
   if (!state.records.length) return alert("No hay datos para exportar.");
   
-  // Clonamos el rawData original para no corromper la memoria activa
   const dataToExport = state.rawData.map((row, i) => {
     const record = state.records[i];
     const cluster = state.clusters[record.clave];
     
-    // Inyectamos las columnas de geocodificación al final de la fila
     return {
       ...row,
-      [SCOLS[0]]: record.clave,            // geo_cluster
-      [SCOLS[1]]: cluster.tipo || '—',     // geo_tipo
-      [SCOLS[2]]: cluster.latFinal || '',   // geo_lat
-      [SCOLS[3]]: cluster.lonFinal || '',   // geo_lon
-      [SCOLS[4]]: cluster.metodo || '—',   // geo_metodo
-      [SCOLS[5]]: cluster.confianza || '—' // geo_confianza
+      [SCOLS[0]]: record.clave,
+      [SCOLS[1]]: cluster.tipo || '—',
+      [SCOLS[2]]: cluster.latFinal || '',
+      [SCOLS[3]]: cluster.lonFinal || '',
+      [SCOLS[4]]: cluster.metodo || '—',
+      [SCOLS[5]]: cluster.confianza || '—'
     };
   });
 
@@ -1119,9 +1087,7 @@ window.exportBackupExcel = function() {
   XLSX.writeFile(wb, `Respaldo_${state.origFileName}_${new Date().toISOString().slice(0,10)}.xlsx`);
 };
 
-// 2. CÁPSULA DE SESIÓN (.json): Empaqueta TODO para portabilidad total
 window.exportSessionFile = function() {
-    // Preparamos los clusters convirtiendo los Set (flagged) a Array para que el JSON no los borre
     const serializableClusters = {};
     Object.entries(state.clusters).forEach(([k, c]) => {
         serializableClusters[k] = { ...c, flagged: Array.from(c.flagged || []) };
@@ -1133,7 +1099,6 @@ window.exportSessionFile = function() {
         state: {
             ...state,
             clusters: serializableClusters,
-            // Aquí empaquetamos los polígonos que tanto cuesta cargar
             referenceGeoJSON: state.referenceGeoJSON,
             recintosPointsData: state.recintosPointsData
         }
@@ -1146,7 +1111,6 @@ window.exportSessionFile = function() {
     a.click();
 };
 
-// 3. REANIMADOR: Carga la cápsula y restaura el universo de trabajo
 window.importSessionFile = function(input) {
     const file = input.files[0];
     if (!file) return;
@@ -1157,16 +1121,13 @@ window.importSessionFile = function(input) {
             const session = JSON.parse(e.target.result);
             if (!session.state) throw new Error("Archivo de sesión inválido");
 
-            // 🧠 BIFURCACIÓN DE LÓGICA: ¿Restaurar o usar como Plantilla?
             const esPlantilla = confirm("¿Deseas usar esta cápsula como PLANTILLA DE ENTORNO para un archivo nuevo?\n\n✅ [Aceptar]: Carga los Polígonos, Recintos, Maestro de Localidades y la Supermente, dejando el espacio libre para subir un Excel nuevo.\n\n❌ [Cancelar]: Restaura la sesión exactamente donde la dejaste para continuar el trabajo anterior.");
 
             if (esPlantilla) {
-                // ♻️ MODO PLANTILLA (Extraer Entorno)
                 state.referenceGeoJSON = session.state.referenceGeoJSON || null;
                 state.recintosPointsData = session.state.recintosPointsData || null;
                 state.localidades = session.state.localidades || [];
 
-                // Actualizar visualmente la UI del Paso 1
                 if (state.referenceGeoJSON) {
                     document.getElementById('fn-geojson').textContent = 'Áreas cargadas desde cápsula ✓';
                     document.getElementById('dz-geojson').style.borderColor = '#16a34a';
@@ -1181,22 +1142,20 @@ window.importSessionFile = function(input) {
                     state.locMapped = true; 
                 }
 
-                // 🧬 Inyectar el conocimiento de esa cápsula a la Supermente local
                 let inyectados = 0;
                 if (session.state.clusters) {
                     Object.values(session.state.clusters).forEach(c => {
                         if (c.latFinal && c.lonFinal && (c.tipo === 'EXACTO' || c.tipo === 'CALLE')) {
-                            core.saveToHistory(c); // Guarda en el disco duro local
+                            core.saveToHistory(c);
                             inyectados++;
                         }
                     });
-                    if (window.loadSMData) window.loadSMData(); // Refresca la RAM de la Supermente
+                    if (window.loadSMData) window.loadSMData();
                 }
 
                 alert(`♻️ Entorno de Trabajo Preparado:\n\n- Polígonos y Recintos listos.\n- ${state.localidades.length} localidades cargadas.\n- ${inyectados} ubicaciones asimiladas en la Supermente.\n\n👉 Ahora sube tu nuevo 'Excel de direcciones' en el recuadro gris y continúa al Paso 2.`);
 
             } else {
-                // 🚀 MODO RESTAURACIÓN TOTAL (El original)
                 Object.values(session.state.clusters).forEach(c => {
                     c.flagged = new Set(c.flagged || []);
                 });
@@ -1214,12 +1173,11 @@ window.importSessionFile = function(input) {
         } catch (err) {
             alert("Error al restaurar: " + err.message);
         }
-        input.value = ''; // Resetear el input por si quieres cargar la misma de nuevo
+        input.value = '';
     };
     reader.readAsText(file);
 };
 
-// 💡 NUEVO: Función para copiar la Query al portapapeles con feedback visual
 window.copyRunList = function(event) {
   const area = document.getElementById('run-list-area');
   if (!area || !area.value) return;
@@ -1245,13 +1203,9 @@ window.copyRunList = function(event) {
 
 window.addEventListener('beforeunload', function (e) { if (state && state.rawData && state.rawData.length > 0) { e.preventDefault(); e.returnValue = ''; } });
 
-// ═══════════════════════════════════════════════════════════════
-// MODO SPEEDRUN Y BOTÓN DE PÁNICO: ATAJOS DE TECLADO
-// ═══════════════════════════════════════════════════════════════
 document.addEventListener('keydown', function(e) {
   const key = e.key.toLowerCase();
 
-  // 🛡️ BOTÓN DE PÁNICO: Ctrl + S o Ctrl + G (Global, funciona en cualquier pestaña)
   if ((e.ctrlKey || e.metaKey) && (key === 's' || key === 'g')) {
       e.preventDefault(); 
       if (state && state.rawData && state.rawData.length > 0) {
@@ -1260,14 +1214,11 @@ document.addEventListener('keydown', function(e) {
       return;
   }
 
-  // 1. Verificamos si estamos en la pestaña 3 (Validación) para el resto de atajos
   const step3 = document.getElementById('s3');
   if (!step3 || !step3.classList.contains('on') || !curC) return;
 
-  // 2. Si el usuario está escribiendo en el buscador, la query o renombrando, ignoramos
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-  // 📍 NUEVOS ATAJOS DE BÚSQUEDA Y GESTIÓN
   if (key === 'o') { 
       e.preventDefault(); 
       window.geoNominatim(curC); 
@@ -1281,7 +1232,6 @@ document.addEventListener('keydown', function(e) {
   if (key === 's') { 
       e.preventDefault(); 
       const c = state.clusters[curC];
-      // Solo separa si realmente hay registros marcados
       if (c && c.flagged && c.flagged.size > 0) {
           window.splitFlagged(curC); 
       }
@@ -1290,7 +1240,6 @@ document.addEventListener('keydown', function(e) {
   if (key === 'f') { 
       e.preventDefault(); 
       window.openMM(curC);
-      // Auto-enfoque: Le damos 50ms al DOM para abrir el modal y luego clavamos el cursor en el buscador
       setTimeout(() => {
           const mmq = document.getElementById('mmq');
           if (mmq) mmq.focus();
@@ -1298,13 +1247,11 @@ document.addEventListener('keydown', function(e) {
       return; 
   }
 
-  // 3. Atajos de Clasificación
   if (key === 'e') { e.preventDefault(); window.setTipo(curC, 'EXACTO'); return; }
   if (key === 'c') { e.preventDefault(); window.setTipo(curC, 'CALLE'); return; }
   if (key === 'l') { e.preventDefault(); window.setTipo(curC, 'LOCALIDAD'); return; }
   if (key === 'n') { e.preventDefault(); window.setTipo(curC, 'NO GEO'); return; }
 
-  // 4. Confirmar Coordenada (Barra Espaciadora)
   if (key === ' ') { 
     e.preventDefault(); 
     const btnConf = document.getElementById('btn-conf');
@@ -1314,16 +1261,13 @@ document.addEventListener('keydown', function(e) {
     return;
   }
   
-	// 5. Siguiente Pendiente (Tecla Q)
 	  if (key === 'q') {
 	    e.preventDefault();
 	    window.nextPend();
 	    return;
 	  }
 });
-// ═══════════════════════════════════════════════════════════════
-// MAGIA ESPACIAL: DETECTAR RECINTO CON TURF.JS
-// ═══════════════════════════════════════════════════════════════
+
 window.triggerRecintoHighlight = function(lat, lon) {
   if (!lat || !lon || !state.referenceGeoJSON) return;
   try {
@@ -1350,11 +1294,15 @@ window.triggerRecintoHighlight = function(lat, lon) {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// MOTOR AUTO-URBANOS v4.2 — SIGEC primero, Nominatim como fallback
+// MOTOR AUTO-URBANOS v4.3 — SIGEC exclusivo (sin fallback a Nominatim)
 // ═══════════════════════════════════════════════════════════════
 window.startBatchUrban = async function() {
   const btn = document.getElementById('btn-batch');
   if (!btn) return;
+
+  if (!sigec.isAvailable()) {
+    return alert('⚠️ SIGEC no está disponible. El Auto-Urbanos requiere SIGEC — revisa la configuración en ⚙ APIs.');
+  }
 
   const maxRowsStr = prompt("¿Cuál es la cantidad máxima de registros por cluster que deseas procesar en automático?", "1");
   if (maxRowsStr === null) return;
@@ -1371,95 +1319,45 @@ window.startBatchUrban = async function() {
     return alert(`No hay clusters urbanos pendientes de hasta ${maxRows} registro(s) para procesar.`);
   }
 
-  const sigecActivo = sigec.isAvailable();
-  const tiempoEst = sigecActivo
-    ? '< 1 min (SIGEC + Nominatim para los no encontrados)'
-    : `~${Math.ceil((candidatos.length * 1.5) / 60)} min (solo Nominatim)`;
-
-  if (!confirm(`Se encontraron ${candidatos.length} candidatos (de hasta ${maxRows} registros).\n\n${sigecActivo ? '🔍 SIGEC activo — se usará primero (predios SII de Araucanía).\n' : '⚠️ SIGEC no disponible — solo Nominatim.\n'}\nTiempo estimado: ${tiempoEst}\n\nTodos los resultados quedan "por revisar" para tu confirmación.\n\n¿Iniciar?`)) return;
+  if (!confirm(`Se encontraron ${candidatos.length} candidatos (de hasta ${maxRows} registros).\n\n🔍 Se consultará SOLO contra SIGEC (predios SII de Araucanía).\nLos que no tengan match quedan sin tocar, para revisión manual.\n\nTodos los resultados con match quedan "por revisar" para tu confirmación.\n\n¿Iniciar?`)) return;
 
   btn.disabled = true;
-  let exitososSIGEC = 0, exitososNominatim = 0, nominatimQueue = [];
+  let exitosos = 0, sinMatch = 0;
 
-  // Normalizador de CUT (SIGEC usa código sin cero, ej '9201')
   const normCut = v => { const m = String(v ?? '').match(/\d+/); return m ? m[0].replace(/^0+/, '') : ''; };
 
-  // ── PASADA 1: SIGEC ─────────────────────────────────────────
-  if (sigecActivo) {
-    for (let i = 0; i < candidatos.length; i++) {
-      const c = candidatos[i];
-      const row = c.rows[0];
-      const cut = normCut(row.codComuna) || normCut(row.comuna);
-      const query = [row.callNorm || row.calle, row.numNorm || row.numero].filter(Boolean).join(' ').trim();
+  for (let i = 0; i < candidatos.length; i++) {
+    const c = candidatos[i];
+    const row = c.rows[0];
+    const cut = normCut(row.codComuna) || normCut(row.comuna);
+    const query = [row.callNorm || row.calle, row.numNorm || row.numero].filter(Boolean).join(' ').trim();
 
-      btn.innerHTML = `⏳ SIGEC ${i + 1}/${candidatos.length}...`;
+    btn.innerHTML = `⏳ SIGEC ${i + 1}/${candidatos.length}...`;
 
-      if (!cut || !query) { nominatimQueue.push(c); continue; }
-
-      try {
-        const resultados = await sigec.buscar(cut, query, { limite: 1 });
-        if (resultados && resultados.length > 0 && resultados[0].lat != null) {
-          const best = resultados[0];
-          c.tipo      = row.numNorm ? 'EXACTO' : 'CALLE';
-          c.latFinal  = parseFloat(best.lat);
-          c.lonFinal  = parseFloat(best.lon);
-          c.metodo    = `Auto-SIGEC · ${best.direccion || best.rol || ''}`.trim();
-          c.confianza = 'sigec';
-          c.needsReview = true;   // SIGEC es fuzzy → siempre revisar
-          c.rows.forEach(r => {
-            r.tipo = c.tipo; r.latFinal = c.latFinal; r.lonFinal = c.lonFinal;
-            r.metodo = c.metodo; r.needsReview = true;
-          });
-          exitososSIGEC++;
-        } else {
-          nominatimQueue.push(c);  // sin match en SIGEC → cola para Nominatim
-        }
-      } catch (e) {
-        console.warn('SIGEC batch falló para:', query, e.message);
-        nominatimQueue.push(c);
-      }
-    }
-    btn.innerHTML = `⏳ SIGEC: ${exitososSIGEC} hits, ${nominatimQueue.length} para Nominatim...`;
-  } else {
-    nominatimQueue = [...candidatos];
-  }
-
-  // ── PASADA 2: Nominatim para los que SIGEC no resolvió ──────
-  for (let i = 0; i < nominatimQueue.length; i++) {
-    const c = nominatimQueue[i];
-    btn.innerHTML = `⏳ Nominatim ${i + 1}/${nominatimQueue.length}...`;
-
-    const row        = c.rows[0];
-    const comunaName = core.resolveComunaName(row);
-    let localidadName = String(row.localidad || '').trim();
-    if (/^(<null>|null|undefined|na|n\/a)$/i.test(localidadName)) localidadName = '';
-    let restoName = String(row.resto || '').trim();
-    if (/^(<null>|null|undefined|na|n\/a)$/i.test(restoName)) restoName = '';
-
-    let queryParts = [row.callNorm];
-    if (row.numNorm) queryParts.push(row.numNorm);
-    if (localidadName) queryParts.push(localidadName);
-    if (restoName && restoName !== localidadName) queryParts.push(restoName);
-    if (comunaName) queryParts.push(comunaName);
-    queryParts.push('Chile');
-    const query = queryParts.filter(Boolean).join(', ');
+    if (!cut || !query) { sinMatch++; continue; }
 
     try {
-      const res  = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1&countrycodes=cl`);
-      const data = await res.json();
-      if (data && data.length > 0) {
-        c.tipo = row.numNorm ? 'EXACTO' : 'CALLE';
-        c.latFinal  = parseFloat(data[0].lat);
-        c.lonFinal  = parseFloat(data[0].lon);
-        c.metodo    = 'Propuesta Auto-Nominatim';
-        c.confianza = 'nominatim';
+      const resultados = await sigec.buscar(cut, query, { limite: 1 });
+      if (resultados && resultados.length > 0 && resultados[0].lat != null) {
+        const best = resultados[0];
+        c.tipo      = row.numNorm ? 'EXACTO' : 'CALLE';
+        c.latFinal  = parseFloat(best.lat);
+        c.lonFinal  = parseFloat(best.lon);
+        c.metodo    = `Auto-SIGEC · ${best.direccion || best.rol || ''}`.trim();
+        c.confianza = 'sigec';
         c.needsReview = true;
-        c.rows.forEach(r => { r.tipo = c.tipo; r.latFinal = c.latFinal; r.lonFinal = c.lonFinal; r.metodo = c.metodo; r.needsReview = true; });
-        exitososNominatim++;
+        c.rows.forEach(r => {
+          r.tipo = c.tipo; r.latFinal = c.latFinal; r.lonFinal = c.lonFinal;
+          r.metodo = c.metodo; r.needsReview = true;
+        });
+        exitosos++;
+      } else {
+        sinMatch++;
       }
-    } catch (e) { console.warn('Nominatim falló:', query); }
-
-    if (i < nominatimQueue.length - 1) await new Promise(r => setTimeout(r, 1500));
+    } catch (e) {
+      console.warn('SIGEC batch falló para:', query, e.message);
+      sinMatch++;
+    }
   }
 
   btn.disabled = false;
@@ -1470,10 +1368,9 @@ window.startBatchUrban = async function() {
 
   alert(
     `✅ Proceso completado.\n\n` +
-    `🔍 SIGEC (por revisar): ${exitososSIGEC}\n` +
-    `🌍 Nominatim (por revisar): ${exitososNominatim}\n` +
-    `❓ Sin resultado: ${candidatos.length - exitososSIGEC - exitososNominatim}\n\n` +
-    `⚠️ Todos los registros geocodificados quedan "Por revisar" y necesitan tu confirmación manual.`
+    `🔍 SIGEC (por revisar): ${exitosos}\n` +
+    `❓ Sin match — quedan pendientes para revisión manual: ${sinMatch}\n\n` +
+    `⚠️ Los registros con match quedan "Por revisar" y necesitan tu confirmación manual.`
   );
 };
 
@@ -1483,35 +1380,29 @@ window.startBatchUrban = async function() {
 let smMap = null;
 let smLayerGroup = null;
 let smActiveMarker = null;
-let smBaseCoords = null; // Para el odómetro
+let smBaseCoords = null;
 
 window.openSMEditor = function() {
     window.closeAPIs();
     document.getElementById('sm-editor-modal').classList.add('on');
     
-    // 1. Inicializar mapa si no existe
     if (!smMap) {
-        // 🔥 HACK DE ZOOM: Permitimos acercar hasta el nivel 22
         smMap = L.map('sm-map', { maxZoom: 22 }).setView([-38.73965, -72.59842], 13);
         
-        // Capa 1: Radar Zerg (Oscura)
         const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
             attribution: '© OpenStreetMap | © CARTO',
             maxZoom: 22,
-            maxNativeZoom: 19 // Aquí termina el mapa real y empieza el zoom óptico
+            maxNativeZoom: 19
         });
 
-        // Capa 2: OSM Clásico (Con numeración predial)
         const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© OpenStreetMap',
             maxZoom: 22,
             maxNativeZoom: 19
         });
 
-        // Activamos la oscura por defecto para mantener el tema
         darkLayer.addTo(smMap);
 
-        // 🔥 CONTROL DE CAPAS: Creamos el interruptor en la esquina superior derecha
         const baseMaps = {
             "Radar Zerg (Oscuro)": darkLayer,
             "OSM (Numeración)": osmLayer
@@ -1521,7 +1412,6 @@ window.openSMEditor = function() {
         smLayerGroup = L.featureGroup().addTo(smMap);
     }
     
-    // 2. Leaflet necesita un respiro al abrirse en un modal para calcular su tamaño
     setTimeout(() => {
         smMap.invalidateSize();
         window.loadSMData();
@@ -1530,17 +1420,16 @@ window.openSMEditor = function() {
 
 window.closeSMEditor = function() {
     document.getElementById('sm-editor-modal').classList.remove('on');
-    window.cancelSMMutation(); // Si estaba editando, abortamos
+    window.cancelSMMutation();
 };
 
-// Memoria global para los filtros de la Cámara de Evolución
 window.smNodesData = []; 
-let smMapClickHandler = null; // Para el clic de mutación
+let smMapClickHandler = null;
 
 window.loadSMData = function() {
     if (!smLayerGroup) return;
     smLayerGroup.clearLayers();
-    window.smNodesData = []; // Limpiar memoria
+    window.smNodesData = [];
     
     let comunasSet = new Set();
     let regionesSet = new Set();
@@ -1567,7 +1456,6 @@ window.loadSMData = function() {
                     if (comuna !== 'DESCONOCIDA' && comuna !== '') comunasSet.add(comuna);
                     if (region !== 'DESCONOCIDA' && region !== '') regionesSet.add(region);
 
-                    // Guardamos el organismo en la memoria global
                     window.smNodesData.push({ 
 					    key: key, 
 					    name: (data.aliases && data.aliases.length > 0) ? data.aliases[0] : key.replace('GEO_DICT_', ''), 
@@ -1578,7 +1466,6 @@ window.loadSMData = function() {
         }
     }
 
-    // Llenar desplegable de Regiones
     const regSelect = document.getElementById('sm-f-reg');
     if (regSelect) {
         const currentVal = regSelect.value;
@@ -1587,7 +1474,6 @@ window.loadSMData = function() {
         regSelect.value = currentVal;
     }
 
-    // Llenar desplegable de Comunas
     const comSelect = document.getElementById('sm-f-com');
     if (comSelect) {
         const currentVal = comSelect.value;
@@ -1596,7 +1482,7 @@ window.loadSMData = function() {
         comSelect.value = currentVal;
     }
 
-    window.applySMFilters(); // Dibuja los puntos por primera vez
+    window.applySMFilters();
 };
 
 window.applySMFilters = function() {
@@ -1637,7 +1523,6 @@ window.applySMFilters = function() {
         }
     });
 
-    // 🎯 EL CAMBIO: El mapa siempre "abraza" a los puntos filtrados. 
     if (count > 0) {
         smMap.fitBounds(smLayerGroup.getBounds().pad(0.1), { maxZoom: 18, animate: true });
     }
@@ -1654,7 +1539,6 @@ window.selectSMMarker = function(marker) {
     
     const inspector = document.getElementById('sm-inspector-panel');
     
-    // Generar insignias para todos los alias
     const aliasesHTML = marker.smData.aliases ? marker.smData.aliases.map(a => 
         `<span style="background: rgba(168, 85, 247, 0.2); border: 1px solid var(--sm-p); color: var(--sm-tx); padding: 4px 8px; border-radius: 12px; font-size: 11px; display: inline-block; margin: 0 4px 4px 0;">${a}</span>`
     ).join('') : `<span style="color:var(--sm-tx2); font-size:12px;">${marker.smName}</span>`;
@@ -1688,7 +1572,6 @@ window.selectSMMarker = function(marker) {
     `;
 };
 
-// Función auxiliar para actualizar el odómetro
 function updateSMOdometer() {
     if (!smActiveMarker || !smBaseCoords) return;
     const currentPos = smActiveMarker.getLatLng();
