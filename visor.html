@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SIGE - Dashboard de Arquitectura Vivo</title>
+  
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #1e1e1e; --bg-sidebar: #252526; --bg-header: #333333;
+      --border: #3c3c3c; --text: #cccccc; --text-active: #ffffff;
+      --accent: #a855f7; --hover: #2a2d2e;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Consolas', 'Courier New', monospace; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    
+    header { background: var(--bg-header); padding: 10px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    header h1 { font-size: 14px; font-weight: normal; color: var(--text-active); }
+    .status-badge { font-size: 11px; background: var(--accent); color: #fff; padding: 2px 6px; border-radius: 4px; }
+
+    .layout { display: flex; flex: 1; overflow: hidden; }
+    
+    .sidebar { width: 250px; background: var(--bg-sidebar); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+    .sidebar-title { font-size: 11px; text-transform: uppercase; padding: 10px 15px; color: #858585; letter-spacing: 0.5px; display:flex; justify-content: space-between; }
+    .file-list { list-style: none; overflow-y: auto; flex: 1; }
+    .file-item { padding: 6px 15px; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-left: 3px solid transparent; }
+    .file-item:hover { background: var(--hover); color: var(--text-active); }
+    .file-item.active { background: #37373d; color: var(--text-active); border-left-color: var(--accent); }
+    .file-icon { color: #e3a824; font-weight: bold; }
+    .file-icon.py { color: #3572A5; }
+
+    .main-pane { flex: 1; display: flex; flex-direction: column; background: var(--bg); position: relative; }
+    .tabs { display: flex; background: var(--bg-sidebar); border-bottom: 1px solid var(--border); }
+    .tab { padding: 8px 15px; font-size: 13px; background: var(--bg-sidebar); color: #858585; border-right: 1px solid var(--border); cursor: pointer; border-top: 2px solid transparent; }
+    .tab.active { background: var(--bg); color: var(--text-active); border-top: 2px solid var(--accent); cursor: default; }
+    
+    .view-container { flex: 1; overflow: auto; position: relative; display: none; }
+    .view-container.active { display: block; }
+    
+    pre[class*="language-"] { margin: 0 !important; padding: 20px !important; background: transparent !important; border-radius: 0 !important; font-size: 13px !important; line-height: 1.5 !important; }
+    #network-canvas { width: 100%; height: 100%; background: #1e1e1e; }
+    
+    .loader { font-size: 12px; color: var(--accent); padding: 10px 15px; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>SIGE_RAIL_DRIX / Arquitectura en Vivo</h1>
+    <div class="status-badge" id="conn-status">Conectando a GitHub...</div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-title"><span>Ecosistema SIGE</span> <span id="file-count">0</span></div>
+      <div id="loading-indicator" class="loader">Descargando repo...</div>
+      <ul class="file-list" id="file-tree"></ul>
+    </aside>
+
+    <main class="main-pane">
+      <div class="tabs">
+        <div class="tab active" id="tab-code" onclick="switchView('code')">Código Fuente (<span id="active-filename">Esperando...</span>)</div>
+        <div class="tab" id="tab-graph" onclick="switchView('graph')">Grafo de Dependencias</div>
+      </div>
+      
+      <div id="view-code" class="view-container active">
+        <pre><code id="code-viewer" class="language-javascript">// Sincronizando con rama main...</code></pre>
+      </div>
+
+      <div id="view-graph" class="view-container">
+        <div id="network-canvas"></div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const REPO_BASE = 'https://raw.githubusercontent.com/direccionregionalix-star/SIGE_RAIL_DRIX/main/';
+    
+    // Diccionario donde se guardará el código descargado
+    const sigeFiles = {};
+    
+    // Lista de archivos a extraer
+    const targetFiles = [
+      { name: 'app.js', path: 'js/app.js', type: 'javascript' },
+      { name: 'core.js', path: 'js/core.js', type: 'javascript' },
+      { name: 'normalizer.js', path: 'js/normalizer.js', type: 'javascript' },
+      { name: 'sigec-client.js', path: 'js/sigec-client.js', type: 'javascript' },
+      { name: 'reporter.js', path: 'js/reporter.js', type: 'javascript' },
+      { name: 'io.js', path: 'js/io.js', type: 'javascript' },
+      { name: 'map.js', path: 'js/map.js', type: 'javascript' },
+      { name: 'db.js', path: 'js/db.js', type: 'javascript' },
+      { name: 'store.js', path: 'js/store.js', type: 'javascript' },
+      { name: 'utils.js', path: 'js/utils.js', type: 'javascript' },
+      { name: 'coords.js', path: 'js/coords.js', type: 'javascript' },
+      { name: 'constants.js', path: 'js/constants.js', type: 'javascript' },
+      { name: 'sii-geocoder.js', path: 'js/sii-geocoder.js', type: 'javascript' },
+      { name: 'build_sii_index.py', path: 'build_sii_index.py', type: 'python' }
+    ];
+
+    // --- UI BASE ---
+    const tree = document.getElementById('file-tree');
+    const viewer = document.getElementById('code-viewer');
+    const filenameLabel = document.getElementById('active-filename');
+
+    function switchView(view) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.view-container').forEach(v => v.classList.remove('active'));
+      document.getElementById('tab-' + view).classList.add('active');
+      document.getElementById('view-' + view).classList.add('active');
+      if(view === 'graph' && !window.networkInitialized) initNetwork();
+    }
+
+    function loadFile(fileName) {
+      document.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
+      const activeNode = document.getElementById('node-' + fileName.replace('.', '-'));
+      if(activeNode) activeNode.classList.add('active');
+      filenameLabel.textContent = fileName;
+
+      const fileData = sigeFiles[fileName];
+      viewer.className = 'language-' + fileData.type;
+      viewer.textContent = fileData.content;
+      Prism.highlightElement(viewer);
+      switchView('code');
+    }
+
+    // --- MOTOR DE EXTRACCIÓN (FETCH) ---
+    async function syncFromGithub() {
+      document.getElementById('conn-status').textContent = 'Sincronizando...';
+      let loadedCount = 0;
+
+      for (const file of targetFiles) {
+        try {
+          const res = await fetch(REPO_BASE + file.path + '?v=' + Date.now()); // Date.now para bypasear cache
+          if (res.ok) {
+            const code = await res.text();
+            sigeFiles[file.name] = { type: file.type, content: code };
+            
+            // Construir nodo en el sidebar
+            const li = document.createElement('li');
+            li.id = 'node-' + file.name.replace('.', '-');
+            li.className = 'file-item';
+            li.onclick = () => loadFile(file.name);
+            const isPy = file.type === 'python';
+            li.innerHTML = \`<span class="file-icon \${isPy ? 'py' : ''}">\${isPy ? '🐍' : 'JS'}</span> \${file.name}\`;
+            tree.appendChild(li);
+            loadedCount++;
+          }
+        } catch (e) {
+          console.error('Error al cargar', file.name, e);
+        }
+      }
+
+      document.getElementById('loading-indicator').style.display = 'none';
+      document.getElementById('file-count').textContent = loadedCount;
+      document.getElementById('conn-status').textContent = 'Online ✅';
+      document.getElementById('conn-status').style.background = '#16a34a';
+
+      if(sigeFiles['app.js']) loadFile('app.js');
+    }
+
+    // --- GRAFO VIS-NETWORK ---
+    function initNetwork() {
+      const nodes = new vis.DataSet([
+        { id: 1, label: 'app.js', group: 'orchestrator', shape: 'box', size: 30, font: {size: 18, color: '#fff'} },
+        { id: 2, label: 'core.js', group: 'logic' },
+        { id: 3, label: 'normalizer.js', group: 'logic' },
+        { id: 4, label: 'sigec-client.js', group: 'api' },
+        { id: 5, label: 'reporter.js', group: 'api' },
+        { id: 6, label: 'io.js', group: 'io' },
+        { id: 7, label: 'map.js', group: 'ui' },
+        { id: 8, label: 'db.js', group: 'storage' },
+        { id: 9, label: 'store.js', group: 'storage' },
+        { id: 10, label: 'utils.js', group: 'utils' },
+        { id: 11, label: 'coords.js', group: 'logic' },
+        { id: 12, label: 'constants.js', group: 'utils' },
+        { id: 13, label: 'sii-geocoder.js', group: 'logic' }
+      ]);
+
+      const edges = new vis.DataSet([
+        { from: 1, to: 9, arrows: 'to' }, { from: 1, to: 10, arrows: 'to' },
+        { from: 1, to: 3, arrows: 'to' }, { from: 1, to: 7, arrows: 'to' },
+        { from: 1, to: 6, arrows: 'to' }, { from: 1, to: 8, arrows: 'to' },
+        { from: 1, to: 2, arrows: 'to' }, { from: 1, to: 5, arrows: 'to' },
+        { from: 1, to: 4, arrows: 'to' },
+        { from: 3, to: 10, arrows: 'to' }, 
+        { from: 2, to: 9, arrows: 'to' },  
+        { from: 5, to: 9, arrows: 'to' },  
+        { from: 6, to: 12, arrows: 'to' }, 
+        { from: 6, to: 11, arrows: 'to' }, 
+        { from: 7, to: 10, arrows: 'to' }, 
+        { from: 7, to: 9, arrows: 'to' },
+        { from: 13, to: 10, arrows: 'to' }
+      ]);
+
+      const container = document.getElementById('network-canvas');
+      const data = { nodes: nodes, edges: edges };
+      const options = {
+        nodes: { shape: 'dot', size: 16, font: { size: 14, color: '#cccccc', face: 'Consolas' }, borderWidth: 2 },
+        edges: { width: 1.5, color: { color: '#555', highlight: '#a855f7' }, smooth: { type: 'cubicBezier' } },
+        groups: {
+          orchestrator: { color: { background: '#a855f7', border: '#9333ea' } },
+          logic: { color: { background: '#0891b2', border: '#0e7490' } },
+          api: { color: { background: '#e11d48', border: '#be123c' } },
+          storage: { color: { background: '#16a34a', border: '#15803d' } },
+          io: { color: { background: '#ca8a04', border: '#a16207' } },
+          ui: { color: { background: '#4f46e5', border: '#4338ca' } },
+          utils: { color: { background: '#475569', border: '#334155' } }
+        },
+        physics: { barnesHut: { gravitationalConstant: -3000, centralGravity: 0.3, springLength: 150 } }
+      };
+
+      new vis.Network(container, data, options);
+      window.networkInitialized = true;
+    }
+
+    // Disparar sincronización al cargar la página
+    syncFromGithub();
+  </script>
+</body>
+</html>
