@@ -3,6 +3,7 @@
   "version": "4.1.0",
   "description": "SIGE — Sistema de Información Geográfica Electoral (sitio estático)",
   "private": true,
+  "type": "module",
   "scripts": {
     "start": "serve . -l $PORT"
   },

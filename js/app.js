@@ -9,6 +9,7 @@ import * as ui from './ui.js';
 import * as core from './core.js';
 import * as reporter from './reporter.js';
 import * as sigec from './sigec-client.js';
+import { comunaSeed, REGION_CONFIG } from './region-config.js';
 
 /* CONSTANTES Y UI */
 const SFIELDS = ['calle','numero','resto','localidad','comuna','referencia','latitud','longitud'];
@@ -76,7 +77,34 @@ window.manualSave = async function() {
 };
 
 /* INICIALIZACIÓN */
+// Aplica la configuración regional a la UI (título + etiquetado del geocoder).
+// Es idempotente y NO desactiva SIGEC: solo lo condiciona por región. Cuando la
+// región no usa SIGEC como motor primario, lo marca "opcional" (sigue disponible
+// como consulta cruzada de predios SII).
+function applyRegionConfigUI() {
+  const rc = REGION_CONFIG;
+  if (!rc) return;
+
+  if (rc.instance) {
+    document.title = rc.instance;
+  } else if (rc.regionName) {
+    document.title = `SIGE (${rc.regionCode || ''}) ${rc.regionName} — Sistema de Información Geográfica Electoral`;
+  }
+
+  const primary = rc.geocoder ? rc.geocoder.primary : null;
+  if (primary !== 'sigec') {
+    const st = document.getElementById('sigec-status');
+    if (st) { st.textContent = 'opcional'; st.className = 'api-status api-empty'; }
+    const head = document.getElementById('sigec-headline');
+    if (head) {
+      const fb = (rc.geocoder && rc.geocoder.fallback) || 'nominatim';
+      head.textContent = `🌍 ${rc.regionName || 'Región'} — geocoder primario: ${fb} · SIGEC opcional`;
+    }
+  }
+}
+
 async function initApp() {
+  applyRegionConfigUI();
   setupDrop('dz-main', 'fi-main', loadMain);
   setupDrop('dz-loc', 'fi-loc', loadLoc);
   setupDrop('dz-geojson', 'fi-geojson', loadGeoJSON);
@@ -223,7 +251,9 @@ window.startProcess = function(){
 window.applyMap = function(){ SFIELDS.forEach(f=>{ state.colMap[f]=document.getElementById('m_'+f)?.value||''; }); normalizeData(); };
 
 function normalizeData(){
-  const dictComunas = {};
+  // Semilla region_config: traduce CUT→comuna aun sin GeoJSON cargado. Si además
+  // se carga un GeoJSON de referencia, sus comunas enriquecen/actualizan el dict.
+  const dictComunas = { ...comunaSeed() };
   if (state.referenceGeoJSON && state.referenceGeoJSON.features) {
       state.referenceGeoJSON.features.forEach(f => {
           const p = f.properties;
