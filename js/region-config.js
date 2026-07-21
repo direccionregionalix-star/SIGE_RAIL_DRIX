@@ -1,40 +1,18 @@
 // region-config.js — Configuración regional del SIGE (patrón region_config)
-// ═══════════════════════════════════════════════════════════════════════════════
-// Este módulo aísla TODO lo que depende de la región en un solo lugar, para que
-// la misma base de código sirva a cualquier región sin hardcodear comunas ni
-// geocodificadores dispersos por la app.
-//
 // Instancia actual: SIGE XIV — Región de Los Ríos (código 14).
-//
-// ⚠️ Lo que este archivo NO toca (universal, idéntico a Araucanía):
-//   · Dominios de tipo geo: 1=LOCALIDAD/RURAL, 2=EXACTO, 3=CALLE, 4=NO GEO
-//   · Nombres de campos y contrato de salida (run, tipo_geo_id, latitud, longitud…)
-//   · RUN como llave. La regla "NO GEO no se recalcula".
-//
-// Geocodificación:
-//   · primary=null  → esta región NO tiene un SIGEC propio todavía. En DRIX el
-//                     SIGEC de Araucanía SÍ está cableado (predios SII Supabase),
-//                     por eso NO se elimina: se condiciona a "opcional" cuando la
-//                     región activa no lo usa como motor primario.
-//   · fallback='nominatim' → se opera con Nominatim (y con el índice SII local
-//                     opcional, si el analista carga uno de la región).
 
 export const REGION_CONFIG = {
   regionName: 'Los Ríos',
   regionCode: '14',
   instance: 'SIGE XIV (Los Ríos) — instancia TEMPORAL de prueba',
   geocoder: {
-    primary: null,          // sin SIGEC propio ACTIVO aún (ver sigec.url abajo)
-    fallback: 'nominatim',  // Nominatim + SII local opcional
-    // Para ACTIVAR el SIGEC de Los Ríos cuando el backend esté desplegado:
-    //   1) desplegar server/ en Railway (ver server/README.md) → obtener su URL
-    //   2) poner esa URL aquí y, si el backend usa SIGEC_API_KEY, la key publicable
-    //   3) cambiar primary a 'sigec'
-    // Con url vacía, el cliente usa su fallback histórico (no rompe nada).
-    sigec: { url: '', key: '' }
+    primary: 'sigec',       // SIGEC de Los Ríos ACTIVO (backend en Railway)
+    fallback: 'nominatim',  // Nominatim como respaldo
+    // Backend SIGEC de Los Ríos (capa HTTP delante de Neon, ver server/).
+    // La key va vacía porque el backend no exige SIGEC_API_KEY (predios públicos).
+    sigec: { url: 'https://sigeraildrix-production-6c8c.up.railway.app', key: '' }
   },
   // Tabla de comunas (código SII de 4 dígitos → nombre canónico en MAYÚSCULAS).
-  // Permite resolver el CUT a nombre sin depender de un GeoJSON de referencia.
   comunas: {
     '1401': 'VALDIVIA',
     '1402': 'CORRAL',
@@ -52,7 +30,6 @@ export const REGION_CONFIG = {
 };
 
 // Normaliza un código de comuna a su forma canónica de 4 dígitos.
-// Acepta '1401', '01401', '1401.0', ' 1401 ' → '1401'.
 export function normalizeCut(v) {
   if (v === null || v === undefined) return '';
   const m = String(v).match(/\d+/);
@@ -72,14 +49,13 @@ export function isRegionComuna(cut) {
   return Object.prototype.hasOwnProperty.call(REGION_CONFIG.comunas, c);
 }
 
-// Semilla { CUT → NOMBRE } lista para inyectar en el diccionario de comunas
-// que arma normalizeData() (mismos formatos con y sin cero a la izquierda).
+// Semilla { CUT → NOMBRE } para inyectar en el diccionario de comunas.
 export function comunaSeed() {
   const seed = {};
   for (const [cut, nom] of Object.entries(REGION_CONFIG.comunas)) {
-    seed[cut] = nom;                                  // '1401'
-    seed[String(parseInt(cut, 10))] = nom;            // '1401' (idempotente aquí)
-    seed['0' + cut] = nom;                            // '01401' por si viene con cero
+    seed[cut] = nom;
+    seed[String(parseInt(cut, 10))] = nom;
+    seed['0' + cut] = nom;
   }
   return seed;
 }
