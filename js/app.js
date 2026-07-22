@@ -806,11 +806,12 @@ window.geoSIGEC = async function(key){
   const cut = normCut(row.codComuna) || normCut(row.comuna);
   if (!cut) { alert('Este cluster no tiene código de comuna (CUT) para consultar SIGEC.'); return; }
 
-  let query = document.getElementById('geo-query')?.value.trim();
-  if (!query) {
-    query = [row.callNorm || row.calle, row.numNorm || row.numero].filter(Boolean).join(' ').trim();
-    if (!query) query = String(row.localidad || row.calle || '').trim();
-  }
+  // SIGEC busca SOLO la dirección como texto (calle + número). La comuna va como
+  // FILTRO (cut), no dentro del texto — por eso NO se usa el campo geo-query, que
+  // trae "calle, comuna, Chile" para Nominatim y ensucia la búsqueda de predios.
+  // Mismo criterio que el Auto-Urbanos (startBatchUrban).
+  let query = [row.callNorm || row.calle, row.numNorm || row.numero].filter(Boolean).join(' ').trim();
+  if (!query) query = String(row.localidad || row.calle || '').trim();
   if (!query) { alert('No hay texto de dirección para buscar en SIGEC.'); return; }
 
   _sigecQuery = query;
