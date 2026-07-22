@@ -885,6 +885,7 @@ window.applySIGEC = function(idx){
 
   window.closeLM();
   mapMod.placeTentative(parseFloat(r.lat), parseFloat(r.lon), true);
+  if (r.geojson) mapMod.drawPredio(r.geojson);   // dibuja el polígono del predio
   setGeoStatus('ok', `🔍 SIGEC: ${r.direccion || r.rol || ''}`.trim());
 
   sigec.registrarSeleccion(_sigecQuery, _sigecComuna, r.rol);

@@ -13,7 +13,8 @@ let confMark = null;
 // Variables para manejar las capas del SERVEL
 let refLayer = null;          
 let recintoDotsLayer = null;  
-let activeRecintoMark = null; 
+let activeRecintoMark = null;
+let predioLayer = null;  // polígono del predio SIGEC seleccionado
 
 let nombresRecintos = {}; 
 
@@ -198,8 +199,26 @@ export function highlightRecinto(codRecint) {
 // ═══════════════════════════════════════════════════════════════
 // FUNCIONES BASE DEL MAPA
 // ═══════════════════════════════════════════════════════════════
+// Dibuja el polígono de un predio SIGEC (geom_geojson). Reemplaza el anterior.
+export function drawPredio(geojson) {
+  if (!map) return;
+  clearPredio();
+  if (!geojson) return;
+  try {
+    const gj = typeof geojson === 'string' ? JSON.parse(geojson) : geojson;
+    predioLayer = L.geoJSON(gj, {
+      style: { color: '#0891b2', weight: 2, fillColor: '#0891b2', fillOpacity: 0.18 }
+    }).addTo(map);
+  } catch (e) { console.warn('Predio GeoJSON inválido:', e); }
+}
+
+export function clearPredio() {
+  if (predioLayer) { map.removeLayer(predioLayer); predioLayer = null; }
+}
+
 export function placeTentative(lat, lon, moveView = false) {
   if (tentMark) map.removeLayer(tentMark);
+  clearPredio();  // un pin nuevo (Nominatim/manual) limpia el predio anterior
   lastTentLat = lat;
   lastTentLon = lon;
   
@@ -233,6 +252,7 @@ export function loadClusterMap(latFinal, lonFinal, metodo, rows) {
   
   if (tentMark) { map.removeLayer(tentMark); tentMark = null; }
   if (confMark) { map.removeLayer(confMark); confMark = null; }
+  clearPredio();
   
   const bounds = [];
 
