@@ -9,7 +9,8 @@ import * as ui from './ui.js';
 import * as core from './core.js';
 import * as reporter from './reporter.js';
 import * as sigec from './sigec-client.js';
-import { comunaSeed, REGION_CONFIG } from './region-config.js';
+import { comunaSeed, comunaName as regionComunaName, REGION_CONFIG } from './region-config.js';
+import * as recintoMatch from './recinto-match.js';
 
 /* CONSTANTES Y UI */
 const SFIELDS = ['calle','numero','resto','localidad','comuna','referencia','latitud','longitud'];
@@ -182,8 +183,32 @@ function loadGeoJSON(f) {
 }
 
 function loadRecintos(f) {
-  if (!f) return; const reader = new FileReader();
-  reader.onload = e => { try { state.recintosPointsData = JSON.parse(e.target.result); document.getElementById('fn-recintos').textContent = f.name + ' ✓'; document.getElementById('dz-recintos').style.borderColor = '#16a34a'; } catch (err) { alert('GeoJSON inválido.'); } };
+  if (!f) return;
+  const okUI = (n) => { document.getElementById('fn-recintos').textContent = `${f.name} ✓ (${n} recintos)`; document.getElementById('dz-recintos').style.borderColor = '#16a34a'; };
+  const nombre = (f.name || '').toLowerCase();
+
+  // CSV/XLSX: maestro tabular (codigo_rec, recinto, comuna, latitud, longitud)
+  if (nombre.endsWith('.csv') || nombre.endsWith('.xlsx') || nombre.endsWith('.xls')) {
+    readXLSX(f, rows => {
+      try {
+        state.recintosMaestro = recintoMatch.maestroDesdeFilas(rows);
+        state.recintosPointsData = recintoMatch.geojsonDesdeMaestro(state.recintosMaestro);
+        okUI(state.recintosMaestro.length);
+      } catch (err) { alert('CSV de recintos inválido: ' + err.message); }
+    });
+    return;
+  }
+
+  // GeoJSON de puntos (compatibilidad): sirve para el mapa y para el cruce.
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const gj = JSON.parse(e.target.result);
+      state.recintosPointsData = gj;
+      state.recintosMaestro = recintoMatch.maestroDesdeGeoJSON(gj);
+      okUI(state.recintosMaestro.length);
+    } catch (err) { alert('GeoJSON inválido.'); }
+  };
   reader.readAsText(f);
 }
 
@@ -273,14 +298,27 @@ function normalizeData(){
 
   const cutCol = state.rawData.length ? Object.keys(state.rawData[0]).find(c=>{ const n = nd(c.toLowerCase()).replace(/[^a-z_]/g,''); return ['cod_comuna','cut_comuna','cut','codigo_comuna'].some(a=>n===a||n.includes(a)); }) : null;
 
+  // ── Modo REASIGNACIÓN (planilla con "MOVER A ESTE RECINTO") ─────────────────
+  // Aditivo y GATILLADO: solo actúa si existe esa columna y hay maestro de
+  // recintos cargado. Filas con MOVER vacío → se IGNORAN (electores correctos).
+  // Filas con MOVER lleno → toman como coordenada BASE la del recinto destino
+  // (cruce por nombre, acotado a la comuna del elector vía COMI). Sin identificar
+  // → quedan sin coordenada y salen en el reporte; nunca se inventa nada.
+  const rawCols = state.rawData.length ? Object.keys(state.rawData[0]) : [];
+  const moverCol = rawCols.find(c => nd(c.toLowerCase()).includes('mover'));
+  const comiCol  = rawCols.find(c => { const n = nd(c.toLowerCase()).replace(/[^a-z_]/g,''); return n === 'comi' || n.includes('comi'); }) || cutCol;
+  const modoReasignacion = Boolean(moverCol && state.recintosMaestro && state.recintosMaestro.length);
+  const reasSinId = [], reasRevisar = [];
+  let reasIgnoradas = 0, reasCruzadas = 0;
+
   state.records = state.rawData.map((row, i) => {
     const g = f => state.colMap[f] ? String(row[state.colMap[f]] ?? '') : '';
     const calle=g('calle'), numero=g('numero'), resto=g('resto');
-    const { callNorm, numNorm, clave } = normDir(calle, numero); 
-    
+    const { callNorm, numNorm, clave } = normDir(calle, numero);
+
     let rawComuna = g('comuna').trim().toUpperCase();
     let comunaTraducida = rawComuna;
-    
+
     if (dictComunas[rawComuna]) {
         comunaTraducida = dictComunas[rawComuna];
     } else {
@@ -288,18 +326,48 @@ function normalizeData(){
         if (dictComunas[rawNum]) comunaTraducida = dictComunas[rawNum];
     }
 
+    let latBase = parseFloat(g('latitud'))||null, lonBase = parseFloat(g('longitud'))||null;
+    let reasMetodo = null, reasRecinto = null, reasNeedsReview = false;
+
+    if (modoReasignacion) {
+      const res = recintoMatch.resolverFilaReasignacion(
+        row, { mover: moverCol, comi: comiCol, comuna: state.colMap.comuna },
+        regionComunaName, state.recintosMaestro
+      );
+      if (res.ignorar) { reasIgnoradas++; return null; }   // elector correcto → se ignora
+      reasCruzadas++;
+      latBase = (res.lat != null && !isNaN(res.lat)) ? res.lat : null;
+      lonBase = (res.lon != null && !isNaN(res.lon)) ? res.lon : null;
+      reasMetodo = res.metodo; reasRecinto = res.recinto; reasNeedsReview = res.revisar;
+      const run = String(row.RUN ?? row.run ?? '').trim();
+      if (res.sinIdentificar)   reasSinId.push(`${run || '(s/RUN)'}: "${res.mover}"`);
+      else if (res.revisar)     reasRevisar.push(`${run || '(s/RUN)'}: "${res.mover}" → ${res.recinto} (${res.metodo})`);
+    }
+
     return {
       id: i, original: [calle,numero,resto].filter(Boolean).join(' '),
-      calle, numero, resto, localidad: g('localidad'), 
+      calle, numero, resto, localidad: g('localidad'),
       comuna: comunaTraducida,
       ref: g('referencia'),
       codComuna: cutCol ? String(row[cutCol]||'').trim() : rawComuna,
       callNorm, numNorm, clave: String(row[SCOLS[0]]||clave).trim(),
-      latBase: parseFloat(g('latitud'))||null, lonBase: parseFloat(g('longitud'))||null,
+      latBase, lonBase,
       tipo: String(row[SCOLS[1]]||'').trim()||null, latFinal: parseFloat(row[SCOLS[2]])||null, lonFinal: parseFloat(row[SCOLS[3]])||null,
-      metodo: String(row[SCOLS[4]]||'')||null, confianza: String(row[SCOLS[5]]||'')||null
+      metodo: String(row[SCOLS[4]]||'')||null, confianza: String(row[SCOLS[5]]||'')||null,
+      reasMetodo, reasRecinto, reasNeedsReview
     };
-  });
+  }).filter(Boolean);
+
+  if (modoReasignacion) {
+    setTimeout(() => {
+      let msg = `📋 Reasignación procesada:\n\n` +
+                `✅ ${reasCruzadas} con recinto cruzado (coordenada base puesta)\n` +
+                `⏭️ ${reasIgnoradas} correctos → ignorados`;
+      if (reasRevisar.length) msg += `\n\n⚠️ ${reasRevisar.length} POR REVISAR (match aproximado):\n` + reasRevisar.slice(0,12).join('\n') + (reasRevisar.length>12?'\n…':'');
+      if (reasSinId.length)   msg += `\n\n❌ ${reasSinId.length} SIN IDENTIFICAR (sin coordenada):\n` + reasSinId.slice(0,12).join('\n') + (reasSinId.length>12?'\n…':'');
+      alert(msg);
+    }, 100);
+  }
 
   state.clusters = {};
   state.records.forEach(r => {
