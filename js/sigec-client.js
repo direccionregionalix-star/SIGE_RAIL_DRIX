@@ -8,19 +8,27 @@
 //   · EXACTO / CALLE  → centroide del predio como coordenada urbana
 //   · LOCALIDAD       → predio rural como ancla de localidad
 //
-// Credenciales por defecto (anon key pública, read-only por RLS). Se pueden
-// sobrescribir desde el modal ⚙ si algún día se rota el proyecto.
+// Endpoint por región: SIGEC es region_config. La URL/key salen de
+// REGION_CONFIG.geocoder.sigec (si están puestas); si no, se usa el fallback
+// histórico (Araucanía). El modal ⚙ (localStorage) siempre tiene prioridad.
+import { REGION_CONFIG } from './region-config.js';
 
-const SIGEC_DEFAULT_URL = 'https://cbqpeusznwotoeftkegw.supabase.co';
-const SIGEC_DEFAULT_KEY = 'sb_publishable_jp4zBRi9mDjZREBckfkyIA_kZ0dcHon';
+const SIGEC_FALLBACK_URL = 'https://cbqpeusznwotoeftkegw.supabase.co';
+const SIGEC_FALLBACK_KEY = 'sb_publishable_jp4zBRi9mDjZREBckfkyIA_kZ0dcHon';
 
 const LS_URL = 'sige_sigec_url';
 const LS_KEY = 'sige_sigec_key';
 
+function regionSigec() {
+  const g = REGION_CONFIG && REGION_CONFIG.geocoder && REGION_CONFIG.geocoder.sigec;
+  return g && typeof g === 'object' ? g : {};
+}
+
 function cfg() {
+  const rs = regionSigec();
   return {
-    url: (localStorage.getItem(LS_URL) || SIGEC_DEFAULT_URL).replace(/\/$/, ''),
-    key: localStorage.getItem(LS_KEY) || SIGEC_DEFAULT_KEY
+    url: (localStorage.getItem(LS_URL) || rs.url || SIGEC_FALLBACK_URL).replace(/\/$/, ''),
+    key: localStorage.getItem(LS_KEY) || rs.key || SIGEC_FALLBACK_KEY
   };
 }
 
