@@ -307,12 +307,17 @@ function normalizeData(){
   const rawCols = state.rawData.length ? Object.keys(state.rawData[0]) : [];
   const moverCol = rawCols.find(c => nd(c.toLowerCase()).includes('mover'));
   const comiCol  = rawCols.find(c => { const n = nd(c.toLowerCase()).replace(/[^a-z_]/g,''); return n === 'comi' || n.includes('comi'); }) || cutCol;
-  const modoReasignacion = Boolean(moverCol && state.recintosMaestro && state.recintosMaestro.length);
+  // Si el Excel ya trae progreso guardado (columnas geo_*), NO se re-cruza: se
+  // restaura la sesión tal cual (permite continuar/migrar sin pisar el avance).
+  const yaProcesado = rawCols.some(c => { const n = nd(c.toLowerCase()); return n === 'geo_lat' || n === 'geo_estado'; });
+  const modoReasignacion = Boolean(moverCol && state.recintosMaestro && state.recintosMaestro.length && !yaProcesado);
   const reasSinId = [], reasRevisar = [];
   let reasIgnoradas = 0, reasCruzadas = 0;
 
   state.records = state.rawData.map((row, i) => {
     const g = f => state.colMap[f] ? String(row[state.colMap[f]] ?? '') : '';
+    const geoEstado = String(row.geo_estado ?? '').trim().toLowerCase();
+    if (geoEstado.startsWith('correcto')) return null;   // re-importación: seguir ignorando los correctos
     const calle=g('calle'), numero=g('numero'), resto=g('resto');
     const { callNorm, numNorm, clave } = normDir(calle, numero);
 
@@ -340,8 +345,14 @@ function normalizeData(){
       lonBase = (res.lon != null && !isNaN(res.lon)) ? res.lon : null;
       reasMetodo = res.metodo; reasRecinto = res.recinto; reasNeedsReview = res.revisar;
       const run = String(row.RUN ?? row.run ?? '').trim();
-      if (res.sinIdentificar)   reasSinId.push(`${run || '(s/RUN)'}: "${res.mover}"`);
+      if (res.sinIdentificar)   reasSinId.push(`${run || '(s/RUN)'}: "${res.mover}"${res.metodo && res.metodo !== 'sin_identificar' ? ' ['+res.metodo+']' : ''}`);
       else if (res.revisar)     reasRevisar.push(`${run || '(s/RUN)'}: "${res.mover}" → ${res.recinto} (${res.metodo})`);
+    }
+
+    // Re-importación de sesión: 'propuesto' vuelve como coordenada BASE (pendiente).
+    if (geoEstado === 'propuesto') {
+      const gl = parseFloat(row[SCOLS[2]]) || null, go = parseFloat(row[SCOLS[3]]) || null;
+      if (gl != null) { latBase = gl; lonBase = go; }
     }
 
     return {
@@ -352,7 +363,9 @@ function normalizeData(){
       codComuna: cutCol ? String(row[cutCol]||'').trim() : rawComuna,
       callNorm, numNorm, clave: String(row[SCOLS[0]]||clave).trim(),
       latBase, lonBase,
-      tipo: String(row[SCOLS[1]]||'').trim()||null, latFinal: parseFloat(row[SCOLS[2]])||null, lonFinal: parseFloat(row[SCOLS[3]])||null,
+      tipo: String(row[SCOLS[1]]||'').trim()||null,
+      latFinal: (geoEstado === 'propuesto') ? null : (parseFloat(row[SCOLS[2]])||null),
+      lonFinal: (geoEstado === 'propuesto') ? null : (parseFloat(row[SCOLS[3]])||null),
       metodo: String(row[SCOLS[4]]||'')||null, confianza: String(row[SCOLS[5]]||'')||null,
       reasMetodo, reasRecinto, reasNeedsReview
     };
@@ -1165,26 +1178,46 @@ window.updateSupermenteStats = () => {
 
 window.exportBackupExcel = function() {
   if (!state.records.length) return alert("No hay datos para exportar.");
-  
+
+  // Emparejar por id REAL (índice original en rawData). En modo reasignación los
+  // registros se filtran, así que NO se puede indexar por posición.
+  const porId = new Map(state.records.map(r => [r.id, r]));
+
   const dataToExport = state.rawData.map((row, i) => {
-    const record = state.records[i];
-    const cluster = state.clusters[record.clave];
-    
+    const record = porId.get(i);
+
+    // Fila ignorada (elector correcto, MOVER vacío) o no procesada: se conserva
+    // tal cual, marcada para no confundirla con las trabajadas.
+    if (!record) {
+      return { ...row, [SCOLS[0]]:'', [SCOLS[1]]:'', [SCOLS[2]]:'', [SCOLS[3]]:'', [SCOLS[4]]:'', [SCOLS[5]]:'', geo_estado:'correcto (sin cambios)', geo_recinto:'' };
+    }
+
+    const cluster = state.clusters[record.clave] || {};
+    // Coordenada CONFIRMADA (latFinal) o, si aún no se confirma, la PROPUESTA (latBase).
+    const latConf = (cluster.latFinal != null ? cluster.latFinal : record.latFinal);
+    const lonConf = (cluster.lonFinal != null ? cluster.lonFinal : record.lonFinal);
+    const usaConf = latConf != null && lonConf != null && !isNaN(latConf);
+    const lat = usaConf ? latConf : record.latBase;
+    const lon = usaConf ? lonConf : record.lonBase;
+    const estado = usaConf ? 'confirmado' : ((record.latBase != null) ? 'propuesto' : 'pendiente');
+
     return {
       ...row,
       [SCOLS[0]]: record.clave,
-      [SCOLS[1]]: cluster.tipo || '—',
-      [SCOLS[2]]: cluster.latFinal || '',
-      [SCOLS[3]]: cluster.lonFinal || '',
-      [SCOLS[4]]: cluster.metodo || '—',
-      [SCOLS[5]]: cluster.confianza || '—'
+      [SCOLS[1]]: (cluster.tipo || record.tipo) || '',
+      [SCOLS[2]]: (lat != null ? lat : ''),
+      [SCOLS[3]]: (lon != null ? lon : ''),
+      [SCOLS[4]]: (cluster.metodo || record.metodo) || (record.reasRecinto ? 'Recinto: ' + record.reasRecinto : '') || '',
+      [SCOLS[5]]: (cluster.confianza || record.confianza) || '',
+      geo_estado: estado,
+      geo_recinto: record.reasRecinto || ''
     };
   });
 
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.json_to_sheet(dataToExport);
   XLSX.utils.book_append_sheet(wb, ws, "Respaldo SIGE");
-  XLSX.writeFile(wb, `Respaldo_${state.origFileName}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  XLSX.writeFile(wb, `Respaldo_${state.origFileName || 'SIGE'}_${new Date().toISOString().slice(0,10)}.xlsx`);
 };
 
 window.exportSessionFile = function() {
