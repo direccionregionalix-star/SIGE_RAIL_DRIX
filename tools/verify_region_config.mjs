@@ -12,11 +12,17 @@
 // Sale con código 0 si todo pasa; 1 si alguna aserción falla.
 
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
+
+// import() dinámico necesita una URL file://, no una ruta del SO. En Linux una
+// ruta absoluta "cuela" por accidente; en Windows revienta con
+// ERR_UNSUPPORTED_ESM_URL_SCHEME porque 'C:' parece un protocolo. Los analistas
+// trabajan en Windows: el harness tiene que correr en su equipo, no solo en CI.
+const mod = (...partes) => import(pathToFileURL(join(ROOT, ...partes)).href);
 
 // ── Aserciones mínimas ────────────────────────────────────────────────────────
 let passed = 0, failed = 0;
@@ -50,10 +56,10 @@ globalThis.window = {
 };
 
 // ── Carga de módulos REALES ───────────────────────────────────────────────────
-const io = await import(join(ROOT, 'js', 'io.js'));
-const region = await import(join(ROOT, 'js', 'region-config.js'));
-const core = await import(join(ROOT, 'js', 'core.js'));
-const { DOMINIOS } = await import(join(ROOT, 'js', 'constants.js'));
+const io = await mod('js', 'io.js');
+const region = await mod('js', 'region-config.js');
+const core = await mod('js', 'core.js');
+const { DOMINIOS } = await mod('js', 'constants.js');
 
 // ── Padrón de prueba → rawData (llaves que consumen los exportadores) ─────────
 function parseCsv(text) {
@@ -97,18 +103,46 @@ const clusters = { todo: { key: 'todo', rows, tipo: null, latFinal: null, lonFin
 
 // ═══════════════════════════════════════════════════════════════════════════════
 console.log('\n▎ region_config: CUT → nombre de comuna');
-const esperadas = {
-  '1401': 'VALDIVIA', '1402': 'CORRAL', '1403': 'LANCO', '1404': 'LOS LAGOS',
-  '1405': 'MAFIL', '1406': 'MARIQUINA', '1407': 'PAILLACO', '1408': 'PANGUIPULLI',
-  '1409': 'LA UNION', '1410': 'FUTRONO', '1411': 'LAGO RANCO', '1412': 'RIO BUENO'
+// CANON: código único territorial (CUT/INE) de las 12 comunas de Los Ríos, tal
+// como llega en el padrón y en el catastro. Es de 5 dígitos y NO es correlativo:
+// la provincia de Ranco parte en 142xx. Esta tabla es la fuente de verdad del
+// harness; si region-config.js se desvía de ella, el CI corta.
+//
+// Nota: una versión anterior de region-config.js usó códigos correlativos de 4
+// dígitos (1401…1412). No existen como CUT oficial y se eliminaron. No se agregó
+// una tabla de alias 4→5 porque el mapeo no es derivable (1409 → 14201) y no
+// tenemos evidencia de que ese formato circule de verdad en planillas. En vez de
+// adivinar, la telemetría registra los CUT que NO se resuelven (js/telemetry.js)
+// para que la decisión se tome con datos de operación.
+const CANON = {
+  '14101': 'VALDIVIA',   '14102': 'CORRAL',     '14103': 'LANCO',
+  '14104': 'LOS LAGOS',  '14105': 'MAFIL',      '14106': 'MARIQUINA',
+  '14107': 'PAILLACO',   '14108': 'PANGUIPULLI','14201': 'LA UNION',
+  '14202': 'FUTRONO',    '14203': 'LAGO RANCO', '14204': 'RIO BUENO'
 };
-for (const [cut, nom] of Object.entries(esperadas)) eq(region.comunaName(cut), nom, `comunaName('${cut}')`);
-eq(region.comunaName(1408), 'PANGUIPULLI', 'comunaName(1408) numérico');
-eq(region.comunaName('9999'), '', 'comunaName CUT desconocido → ""');
+for (const [cut, nom] of Object.entries(CANON)) eq(region.comunaName(cut), nom, `comunaName('${cut}')`);
+eq(region.comunaName(14108), 'PANGUIPULLI', 'comunaName(14108) numérico');
+eq(region.comunaName('09101'), '', 'comunaName CUT de otra región → ""');
+eq(region.comunaName('1409'), '', 'comunaName CUT correlativo obsoleto → "" (no se adivina)');
+
+// Guardia anti-drift en las dos direcciones: ni sobra ni falta ninguna comuna.
+const cfgCut = Object.keys(region.REGION_CONFIG.comunas).sort();
+const canonCut = Object.keys(CANON).sort();
+ok(cfgCut.length === canonCut.length && cfgCut.every((c, i) => c === canonCut[i]),
+   `region_config trae exactamente las 12 comunas del canon (tiene ${cfgCut.length})`);
+ok(cfgCut.every(c => /^14[12]0?\d$/.test(c) && c.length === 5),
+   'todos los CUT del region_config son de 5 dígitos y de la región 14');
+
+// El padrón de prueba debe hablar el mismo idioma que el region_config: si no,
+// el harness "pasa" pero la app no resuelve ninguna comuna (fue el bug del PR #1).
+const cutsPadron = [...new Set(rawData.map(r => r.comuna))];
+ok(cutsPadron.every(c => region.comunaName(c) !== ''),
+   `el padrón de prueba usa CUT que el region_config resuelve (${cutsPadron.length} distintos)`);
+
 const seed = region.comunaSeed();
-ok(seed['1401'] === 'VALDIVIA' && seed['1412'] === 'RIO BUENO', 'comunaSeed() siembra las 12 comunas');
-eq(core.resolveComunaName({ codComuna: '1408' }), 'PANGUIPULLI', 'resolveComunaName usa fallback region_config');
-eq(core.resolveComunaName({ comuna: '1401' }), 'VALDIVIA', 'resolveComunaName con CUT en campo comuna');
+ok(seed['14101'] === 'VALDIVIA' && seed['14204'] === 'RIO BUENO', 'comunaSeed() siembra las 12 comunas');
+eq(core.resolveComunaName({ codComuna: '14108' }), 'PANGUIPULLI', 'resolveComunaName usa fallback region_config');
+eq(core.resolveComunaName({ comuna: '14101' }), 'VALDIVIA', 'resolveComunaName con CUT en campo comuna');
 
 console.log('\n▎ Exportador REAL buildGeoJSONExport (Esri JSON)');
 blobs.length = 0;
