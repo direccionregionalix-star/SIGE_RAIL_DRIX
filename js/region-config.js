@@ -6,9 +6,24 @@ export const REGION_CONFIG = {
   regionCode: '14',
   instance: 'SIGE XIV (Los Ríos) — instancia TEMPORAL de prueba',
   geocoder: {
-    primary: 'sigec',       // SIGEC de Los Ríos ACTIVO (backend en Railway)
-    fallback: 'nominatim',  // Nominatim como respaldo
-    sigec: { url: 'https://sigeraildrix-production-6c8c.up.railway.app', key: '' }
+    // Los Ríos NO tiene catastro de predios propio publicado. El motor primario
+    // es Nominatim (client-side, requiere salida a openstreetmap.org).
+    primary: 'nominatim',
+    fallback: 'nominatim',
+
+    // SIGEC XIV: el backend vivía en Railway y murió al vencer el trial
+    // (sigeraildrix-production-6c8c… → 404). Se deja la URL VACÍA a propósito:
+    // una URL muerta hardcodeada deja el botón 🔍 SIGEC colgando sin decir por
+    // qué. Con url vacía y regionCode ≠ '09', sigec-client.js marca SIGEC como
+    // NO disponible en vez de consultar en silencio los predios de Araucanía,
+    // que para un padrón de Los Ríos no devuelven nada útil.
+    //
+    // Para reactivarlo: levantar el backend de server/ (o un PostgREST sobre el
+    // catastro XIV) y pegar su URL en el modal ⚙ APIs — NO aquí. El endpoint es
+    // infraestructura, no código; en el modal vive en el localStorage de cada PC
+    // y no queda versionado en un repo público. Si además pasa a ser el motor
+    // principal de la región, recién ahí primary vuelve a 'sigec'.
+    sigec: { url: '', key: '' }
   },
   // CUT/INE de 5 dígitos (como en el padrón y el catastro). Los Ríos SIEMPRE es
   // 5 dígitos; no hay cero a la izquierda que se pierda (eso es de Araucanía).

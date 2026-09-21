@@ -1,0 +1,90 @@
+# CI del SIGE XIV — lo que hace que el verde del PR signifique algo.
+#
+# Antes de esto los únicos "checks" del repo eran los deploys de Railway: el PR #1
+# se mergeó en verde con el harness de region_config fallando 16 de 32 aserciones.
+# Este workflow corre las verificaciones REALES en cada PR y push a main.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verificacion:
+    # Los analistas trabajan en Windows: si el harness solo corre en Linux, no
+    # pueden verificar nada en su equipo. Se prueba en los dos.
+    name: Contrato SIGE + region_config (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Contrato universal: columnas de salida, "NO GEO no se recalcula",
+      # RUN como llave, y CUT→comuna del region_config contra el canon oficial.
+      - name: Harness region_config + exportadores reales
+        run: node tools/verify_region_config.mjs
+
+      # Telemetría local: agregados, sin red, sin datos personales.
+      - name: Verificar telemetría
+        run: node tools/verify_telemetry.mjs
+
+      # Contrato del backend SIGEC (no abre conexiones: inyecta un runner falso).
+      - name: Tests de contrato del backend SIGEC
+        working-directory: server
+        run: node --test test/contract.test.mjs
+
+  higiene:
+    name: Higiene del repo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Solo se PARSEAN (no se ejecutan: no hay DOM en CI).
+      # package.json declara "type": "module", así que --check parsea como ESM.
+      - name: Parsear los módulos ES del front
+        run: |
+          for f in js/*.js tools/*.mjs; do
+            node --check "$f" || { echo "::error file=$f::error de sintaxis"; exit 1; }
+          done
+          echo "OK: $(ls js/*.js tools/*.mjs | wc -l) módulos parsean"
+
+      # Un padrón REAL nunca debe entrar al repo. El de prueba lleva RUN
+      # ficticios de la serie 351000xx; cualquier otro CSV con columna RUN
+      # se considera sospechoso y corta el build.
+      - name: Ningún padrón real versionado
+        run: |
+          fallo=0
+          for f in $(git ls-files '*.csv' '*.CSV'); do
+            [ "$f" = "padron_prueba_los_rios.csv" ] && continue
+            if head -1 "$f" | grep -qiE '(^|,)[[:space:]]*run[[:space:]]*(,|$)'; then
+              echo "::error file=$f::CSV con columna RUN fuera del padrón de prueba"
+              fallo=1
+            fi
+          done
+          if git ls-files '*.xlsx' '*.xls' | grep -q .; then
+            echo "::error::hay planillas .xls/.xlsx versionadas — verificar que no sean padrón"
+            fallo=1
+          fi
+          exit $fallo
+
+      # Nada en el front debe apuntar a un backend de Railway: esas URLs mueren
+      # con el trial y dejan el geocoder colgado (fue el caso de SIGEC XIV).
+      # El endpoint va por el modal ⚙ o por region_config con URL vacía.
+      - name: Sin URLs de Railway hardcodeadas en el front
+        run: |
+          if grep -rn "up\.railway\.app" js/ index.html visor.html 2>/dev/null; then
+            echo "::error::URL de Railway hardcodeada en el front — usa el modal ⚙"
+            exit 1
+          fi
+          echo "OK: sin URLs de Railway en el front"

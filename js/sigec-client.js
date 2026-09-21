@@ -24,11 +24,20 @@ function regionSigec() {
   return g && typeof g === 'object' ? g : {};
 }
 
+// Región dueña del catastro del fallback histórico (predios SII de Araucanía).
+const FALLBACK_REGION = '09';
+
 function cfg() {
   const rs = regionSigec();
+  const lsUrl = localStorage.getItem(LS_URL);
+  const url = (lsUrl || rs.url || SIGEC_FALLBACK_URL).replace(/\/$/, '');
   return {
-    url: (localStorage.getItem(LS_URL) || rs.url || SIGEC_FALLBACK_URL).replace(/\/$/, ''),
-    key: localStorage.getItem(LS_KEY) || rs.key || SIGEC_FALLBACK_KEY
+    url,
+    key: localStorage.getItem(LS_KEY) || rs.key || SIGEC_FALLBACK_KEY,
+    // ¿Este endpoint es el catastro de Araucanía usado por una región que no es
+    // Araucanía? Entonces es un fallback EQUIVOCADO, no un fallback.
+    regionAjena: !lsUrl && !rs.url &&
+                 String((REGION_CONFIG && REGION_CONFIG.regionCode) || FALLBACK_REGION) !== FALLBACK_REGION
   };
 }
 
@@ -39,8 +48,33 @@ export function saveConfig(url, key) {
 
 export function getConfig() { return cfg(); }
 
-// Siempre hay credenciales (las por defecto), así que SIGEC está disponible out-of-the-box
-export function isAvailable() { return Boolean(cfg().url && cfg().key); }
+/**
+ * ¿SIGEC es consultable para la región activa?
+ *
+ * Antes esto devolvía SIEMPRE true, porque las credenciales por defecto nunca
+ * están vacías. Consecuencia real en la instancia XIV: el botón 🔍 SIGEC y el
+ * Auto-Urbanos quedaban habilitados y consultaban el catastro de ARAUCANÍA con
+ * CUT de Los Ríos — cero resultados, sin explicación para el operador.
+ *
+ * Ahora: hay SIGEC si hay endpoint Y ese endpoint corresponde a la región activa
+ * (o el operador lo configuró a mano en ⚙ APIs).
+ */
+export function isAvailable() {
+  const c = cfg();
+  return Boolean(c.url && c.key && !c.regionAjena);
+}
+
+/** Motivo legible de la indisponibilidad, para mostrarlo en la UI en vez de fallar mudo. */
+export function unavailableReason() {
+  const c = cfg();
+  if (!c.url || !c.key) return 'SIGEC no tiene endpoint configurado (⚙ APIs).';
+  if (c.regionAjena) {
+    const r = (REGION_CONFIG && REGION_CONFIG.regionName) || 'esta región';
+    return `SIGEC no tiene catastro propio para ${r}: el endpoint por defecto es el de Araucanía. ` +
+           `Configura la URL regional en ⚙ APIs o usa Nominatim.`;
+  }
+  return '';
+}
 
 function headers() {
   const { key } = cfg();

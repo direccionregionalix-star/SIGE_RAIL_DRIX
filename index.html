@@ -345,6 +345,27 @@
               <div class="api-row"><span class="api-lbl">Anon key</span><input class="api-input" id="sigec-key" type="password" placeholder="(por defecto)" oninput="window.saveSigecConfig()"></div>
             </div>
           </details>
+          <span style="font-size:11px;color:#b45309;display:block;margin-top:6px" id="sigec-motivo"></span>
+        </div>
+
+        <!-- 📊 Medición de uso (local, opt-in) -->
+        <div style="margin-top: 16px; padding: 12px; background: var(--s2); border: 1px solid var(--bd2); border-radius: var(--r); border-left: 4px solid #7c3aed;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <div style="display: flex; flex-direction: column; gap: 2px;">
+              <span style="font-size: 10px; color: var(--tx3); text-transform: uppercase; letter-spacing: 0.5px;">Medición de uso</span>
+              <strong style="font-size: 13px; color: var(--p);">📊 Contadores locales</strong>
+              <span style="font-size:11px;color:var(--tx3)">Solo agregados (tipos, tiempos, fallos del geocoder). No sale de este equipo: no hay red. Sin RUN, sin direcciones, sin coordenadas.</span>
+            </div>
+            <span class="api-status api-empty" id="telemetry-status">apagado</span>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer">
+            <input type="checkbox" id="telemetry-on" onchange="window.toggleTelemetry(this.checked)">
+            Activar medición de uso en este equipo
+          </label>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="btn btn-sm btn-w" onclick="window.descargarTelemetry()">📥 Descargar medición</button>
+            <button class="btn btn-sm" onclick="window.resetTelemetry()">🗑 Borrar contadores</button>
+          </div>
         </div>
 
         <!-- 📡 Reporter SIGE → SIGEA -->

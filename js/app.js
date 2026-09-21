@@ -11,6 +11,7 @@ import * as reporter from './reporter.js';
 import * as sigec from './sigec-client.js';
 import { comunaSeed, comunaName as regionComunaName, REGION_CONFIG } from './region-config.js';
 import * as recintoMatch from './recinto-match.js';
+import * as telemetry from './telemetry.js';
 
 /* CONSTANTES Y UI */
 const SFIELDS = ['calle','numero','resto','localidad','comuna','referencia','latitud','longitud'];
@@ -92,17 +93,55 @@ function applyRegionConfigUI() {
     document.title = `SIGE (${rc.regionCode || ''}) ${rc.regionName} — Sistema de Información Geográfica Electoral`;
   }
 
+  // Estado REAL de SIGEC, no el declarado: si el endpoint por defecto es el de
+  // otra región (o no hay endpoint), se dice, en vez de dejar el botón colgando.
+  const disponible = sigec.isAvailable();
   const primary = rc.geocoder ? rc.geocoder.primary : null;
-  if (primary !== 'sigec') {
-    const st = document.getElementById('sigec-status');
+  const fb = (rc.geocoder && rc.geocoder.fallback) || 'nominatim';
+
+  const st = document.getElementById('sigec-status');
+  const head = document.getElementById('sigec-headline');
+
+  if (!disponible) {
+    if (st) { st.textContent = 'sin catastro'; st.className = 'api-status api-empty'; }
+    if (head) head.textContent = `🌍 ${rc.regionName || 'Región'} — geocoder: ${fb} · SIGEC sin catastro regional`;
+    const motivo = document.getElementById('sigec-motivo');
+    if (motivo) motivo.textContent = sigec.unavailableReason();
+    // Los botones que dependen de SIGEC se deshabilitan explícitamente.
+    const btnBatch = document.getElementById('btn-batch');
+    if (btnBatch) { btnBatch.disabled = true; btnBatch.title = sigec.unavailableReason(); }
+  } else if (primary !== 'sigec') {
     if (st) { st.textContent = 'opcional'; st.className = 'api-status api-empty'; }
-    const head = document.getElementById('sigec-headline');
-    if (head) {
-      const fb = (rc.geocoder && rc.geocoder.fallback) || 'nominatim';
-      head.textContent = `🌍 ${rc.regionName || 'Región'} — geocoder primario: ${fb} · SIGEC opcional`;
-    }
+    if (head) head.textContent = `🌍 ${rc.regionName || 'Región'} — geocoder primario: ${fb} · SIGEC opcional`;
   }
+
+  // Refleja el estado real del interruptor de medición al abrir la app.
+  const tOn = telemetry.isOn();
+  const tChk = document.getElementById('telemetry-on');
+  if (tChk) tChk.checked = tOn;
+  const tSt = document.getElementById('telemetry-status');
+  if (tSt) { tSt.textContent = tOn ? 'midiendo' : 'apagado'; tSt.className = 'api-status ' + (tOn ? 'api-ok' : 'api-empty'); }
+
+  telemetry.sesionInicio();
 }
+
+// ── Medición de uso (opt-in, local) — controles del modal ⚙ ───────────────────
+window.toggleTelemetry = function (on) {
+  telemetry.setOn(Boolean(on));
+  const st = document.getElementById('telemetry-status');
+  if (st) { st.textContent = on ? 'midiendo' : 'apagado'; st.className = 'api-status ' + (on ? 'api-ok' : 'api-empty'); }
+};
+
+window.descargarTelemetry = function () {
+  if (!telemetry.isOn()) return alert('La medición de uso está apagada. Actívala primero.');
+  if (!telemetry.descargar()) alert('No se pudo generar el archivo de medición.');
+};
+
+window.resetTelemetry = function () {
+  if (!confirm('¿Borrar los contadores de uso acumulados en este equipo?')) return;
+  telemetry.reset();
+  alert('Contadores de uso borrados.');
+};
 
 async function initApp() {
   applyRegionConfigUI();
@@ -390,6 +429,29 @@ function normalizeData(){
     if(r.latFinal && !c.latFinal) { c.latFinal=r.latFinal; c.lonFinal=r.lonFinal; c.metodo=r.metodo; c.confianza=r.confianza; }
   });
 
+  // ── Medición: cómo viene la planilla de verdad ──────────────────────────────
+  // El CUT que NO resuelve es el dato más barato y más útil que tenemos: dice si
+  // el padrón llega en un formato que el region_config no sabe leer. Es código de
+  // territorio, no de persona.
+  const cutsVistos = [], cutsNoRes = [];
+  state.records.forEach(r => {
+    const cut = String(r.codComuna || '').trim();
+    if (!cut) return;
+    cutsVistos.push(cut);
+    if (!regionComunaName(cut)) cutsNoRes.push(cut);
+  });
+  const colsMapeadas = new Set(Object.values(state.colMap).filter(Boolean));
+  telemetry.padronCargado({
+    filas: state.records.length,
+    clusters: Object.keys(state.clusters).length,
+    cuts: cutsVistos,
+    cutsNoResueltos: cutsNoRes,
+    columnasNoReconocidas: (state.rawData.length ? Object.keys(state.rawData[0]) : []).filter(c => !colsMapeadas.has(c))
+  });
+  if (modoReasignacion) {
+    telemetry.reasignacion({ cruzadas: reasCruzadas, sinIdentificar: reasSinId.length, ignoradas: reasIgnoradas });
+  }
+
   Object.values(state.clusters).forEach(c => {
       preClassifyCluster(c);
       
@@ -512,8 +574,9 @@ function renderFUList(){
     </div>`).join('')||'<div style="padding:16px;text-align:center">Sin resultados</div>';
 }
 
-window.openC = function(key){ 
-  curC = key; renderFUList(); renderPanel(key); 
+window.openC = function(key){
+  telemetry.clusterAbierto(key);   // arranca el cronómetro de decisión
+  curC = key; renderFUList(); renderPanel(key);
   const c = state.clusters[key];
   if(c) {
     mapMod.loadClusterMap(c.latFinal, c.lonFinal, c.metodo, c.rows); 
@@ -655,7 +718,9 @@ window.acceptSM = function(key) {
 };
 
 window.setTipo = function(key,tipo){
-  state.clusters[key].tipo = tipo; 
+  const tipoPrevio = state.clusters[key] ? state.clusters[key].tipo : null;
+  telemetry.clasificado(key, tipo, Boolean(tipoPrevio && tipoPrevio !== tipo));
+  state.clusters[key].tipo = tipo;
   state.clusters[key].autoVal=false;
   state.clusters[key].needsReview=false; 
   state.clusters[key].rows.forEach(r=>{ r.tipo=tipo; r.needsReview=false; });
@@ -682,7 +747,8 @@ function updateProg(){
 window.confirmCoord = function(){
   if(!curC) return; const coords = mapMod.getTentativeCoords(); if(!coords) return;
   const c = state.clusters[curC];
-  c.latFinal = coords.lat; c.lonFinal = coords.lng; 
+  c.latFinal = coords.lat; c.lonFinal = coords.lng;
+  if (!c.metodo) telemetry.pinManual();
   c.metodo = c.metodo || 'manual';
   c.needsReview = false; 
   c.rows.forEach(r => { 
@@ -841,12 +907,16 @@ window.geoNominatim = async function(key){
   const q = document.getElementById('geo-query')?.value.trim(); if(!q) return;
 
   setGeoStatus('run', '⏳ Buscando...');
+  const t0 = Date.now();
   try {
     const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=cl`);
     const data = await res.json();
-    if(data.length){ mapMod.placeTentative(parseFloat(data[0].lat), parseFloat(data[0].lon), true); setGeoStatus('ok', '✅ Nominatim'); } 
-    else { setGeoStatus('err', '❌ No encontrado'); }
-  } catch(e) { setGeoStatus('err', 'Error de red'); }
+    if(data.length){
+      mapMod.placeTentative(parseFloat(data[0].lat), parseFloat(data[0].lon), true); setGeoStatus('ok', '✅ Nominatim');
+      telemetry.geocoder('nominatim', 'ok', Date.now() - t0);
+    }
+    else { setGeoStatus('err', '❌ No encontrado'); telemetry.geocoder('nominatim', 'sinResultado', Date.now() - t0); }
+  } catch(e) { setGeoStatus('err', 'Error de red'); telemetry.geocoder('nominatim', 'error', Date.now() - t0); }
 };
 
 window.geoGoogle = async function(key){
@@ -857,22 +927,25 @@ window.geoGoogle = async function(key){
   if(!apiKey) return alert("Por favor, ingresa tu API Key de Google Maps en ⚙ APIs");
 
   setGeoStatus('run', '⏳ Buscando en Google...');
-  
+  const t0 = Date.now();
   try {
     const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q)}&key=${apiKey}&components=country:CL`;
     const res = await fetch(url);
     const data = await res.json();
-    
-    if(data.status === 'OK' && data.results && data.results.length > 0){ 
+
+    if(data.status === 'OK' && data.results && data.results.length > 0){
       const loc = data.results[0].geometry.location;
-      mapMod.placeTentative(parseFloat(loc.lat), parseFloat(loc.lng), true); 
-      setGeoStatus('ok', '✅ Google OK'); 
-    } 
-    else { 
-      setGeoStatus('err', '❌ No encontrado por Google'); 
+      mapMod.placeTentative(parseFloat(loc.lat), parseFloat(loc.lng), true);
+      setGeoStatus('ok', '✅ Google OK');
+      telemetry.geocoder('google', 'ok', Date.now() - t0);
     }
-  } catch(e) { 
-    setGeoStatus('err', '❌ Error de red'); 
+    else {
+      setGeoStatus('err', '❌ No encontrado por Google');
+      telemetry.geocoder('google', 'sinResultado', Date.now() - t0);
+    }
+  } catch(e) {
+    setGeoStatus('err', '❌ Error de red');
+    telemetry.geocoder('google', 'error', Date.now() - t0);
   }
 };
 
@@ -881,6 +954,9 @@ let _sigecComuna = '';
 
 window.geoSIGEC = async function(key){
   const c = state.clusters[key]; if(!c) return;
+  // Falla temprano y con motivo: antes, sin catastro regional, esto consultaba
+  // el SIGEC de Araucanía con un CUT de Los Ríos y devolvía vacío sin explicar.
+  if (!sigec.isAvailable()) { telemetry.sigecIndisponible(); alert('⚠️ ' + sigec.unavailableReason()); return; }
   const row = c.rows[0];
 
   const normCut = v => { const m = String(v ?? '').match(/\d+/); return m ? m[0].replace(/^0+/, '') : ''; };
@@ -900,15 +976,19 @@ window.geoSIGEC = async function(key){
   openSIGECPanel(key);
   setSIGECBody('<div style="padding:18px;text-align:center;color:var(--tx3)">⏳ Buscando en SIGEC…</div>');
 
+  const t0 = Date.now();
   try {
     const resultados = await sigec.buscar(cut, query, { limite: 25 });
     if (!resultados.length) {
+      telemetry.geocoder('sigec', 'sinResultado', Date.now() - t0);
       setSIGECBody(`<div style="padding:14px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;font-size:12px;">
         Sin coincidencias en SIGEC para <b>${h(query)}</b> (comuna ${h(cut)}).<br>Prueba con menos texto o revisa la ortografía.</div>`);
       return;
     }
+    telemetry.geocoder('sigec', 'ok', Date.now() - t0);
     renderSIGECResults(resultados);
   } catch (e) {
+    telemetry.geocoder('sigec', 'error', Date.now() - t0);
     setSIGECBody(`<div style="padding:14px;color:#dc2626;font-size:12px;">❌ Error al consultar SIGEC:<br>${h(e.message)}</div>`);
   }
 };
@@ -1127,10 +1207,10 @@ window.gs = function(n, force = false){
   if(n===3){ ui.hideSB(); setTimeout(()=> window.dispatchEvent(new Event('resize')), 150); } else { ui.showSB(); }
 };
 
-window.exportGeoJSON = () => { io.buildGeoJSONExport(state.clusters, state.rawData, state.origFileName); reporter.pushReport('export', true); };
+window.exportGeoJSON = () => { io.buildGeoJSONExport(state.clusters, state.rawData, state.origFileName); reporter.pushReport('export', true); telemetry.exporte('esri_json', state.rawData.length); };
 window.exportLocs = () => { io.buildLocsExport(state.localidades, state.origFileName); };
-window.exportAppend = () => { io.buildAppendExport(state.clusters, state.rawData, state.origFileName); reporter.pushReport('export', true); };
-window.exportEntregaQA = () => { io.buildEntregaQA(state.clusters, state.rawData, state.origFileName); reporter.pushReport('export', true); };
+window.exportAppend = () => { io.buildAppendExport(state.clusters, state.rawData, state.origFileName); reporter.pushReport('export', true); telemetry.exporte('append', state.rawData.length); };
+window.exportEntregaQA = () => { io.buildEntregaQA(state.clusters, state.rawData, state.origFileName); reporter.pushReport('export', true); telemetry.exporte('entrega_qa', state.rawData.length); };
 
 window.saveSigecConfig = function() {
   const url = document.getElementById('sigec-url')?.value || '';
@@ -1434,7 +1514,8 @@ window.startBatchUrban = async function() {
   if (!btn) return;
 
   if (!sigec.isAvailable()) {
-    return alert('⚠️ SIGEC no está disponible. El Auto-Urbanos requiere SIGEC — revisa la configuración en ⚙ APIs.');
+    telemetry.sigecIndisponible();
+    return alert('⚠️ El Auto-Urbanos requiere SIGEC.\n\n' + sigec.unavailableReason());
   }
 
   const maxRowsStr = prompt("¿Cuál es la cantidad máxima de registros por cluster que deseas procesar en automático?", "1");
@@ -1498,6 +1579,7 @@ window.startBatchUrban = async function() {
   renderFUList(); updateProg();
   if (curC && state.clusters[curC]) renderPanel(curC);
   window.autoSave();
+  telemetry.autoUrbanos({ candidatos: candidatos.length, exitosos, sinMatch });
 
   alert(
     `✅ Proceso completado.\n\n` +
