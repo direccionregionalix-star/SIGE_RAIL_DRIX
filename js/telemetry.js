@@ -86,6 +86,9 @@ function vacio() {
     acciones: {
       pinManual: 0,
       autoUrbanos: { corridas: 0, candidatos: 0, exitosos: 0, sinMatch: 0 },
+      // Lote contra Nominatim. `consultasRed` vs `candidatos` es la métrica que
+      // dice si el caché y la cascada están haciendo su trabajo.
+      autoOSM: { corridas: 0, candidatos: 0, resueltos: 0, sinMatch: 0, consultasRed: 0, porModo: {} },
       reasignacion: { filasCruzadas: 0, sinIdentificar: 0, ignoradas: 0 },
       sigecIndisponible: 0     // veces que se intentó SIGEC sin endpoint válido
     },
@@ -227,6 +230,14 @@ export const sigecIndisponible = safe((d) => { d.acciones.sigecIndisponible++; }
 export const autoUrbanos = safe((d, { candidatos = 0, exitosos = 0, sinMatch = 0 } = {}) => {
   const a = d.acciones.autoUrbanos;
   a.corridas++; a.candidatos += candidatos; a.exitosos += exitosos; a.sinMatch += sinMatch;
+});
+
+export const autoOSM = safe((d, { candidatos = 0, resueltos = 0, sinMatch = 0, consultasRed = 0, modo = '' } = {}) => {
+  const a = d.acciones.autoOSM;
+  if (!a) return;
+  a.corridas++; a.candidatos += candidatos; a.resueltos += resueltos;
+  a.sinMatch += sinMatch; a.consultasRed += consultasRed;
+  if (modo) a.porModo[modo] = (a.porModo[modo] || 0) + 1;
 });
 
 export const reasignacion = safe((d, { cruzadas = 0, sinIdentificar = 0, ignoradas = 0 } = {}) => {
