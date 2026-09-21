@@ -176,6 +176,18 @@
                 <div style="display:flex; gap:6px; margin-top:8px;">
                   <input class="sinput" id="fusq" placeholder="Buscar cluster..." oninput="window.fuSearch()" style="flex:1">
                   <button class="btn btn-sm btn-p" id="btn-batch" onclick="window.startBatchUrban()">🤖 Auto-Urbanos</button>
+                  <button class="btn btn-sm btn-p" id="btn-batch-osm" onclick="window.startBatchNominatim()">🌍 Auto-OSM</button>
+                </div>
+                <!-- Progreso del lote: oculto salvo mientras corre -->
+                <div id="osm-progreso" style="display:none; margin-top:8px; padding:8px; background:var(--s2); border:1px solid var(--bd2); border-radius:var(--r); font-size:11px;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                    <span id="osm-texto" style="flex:1; color:var(--tx3)">…</span>
+                    <button class="btn btn-sm" id="osm-pausa" onclick="window.pausarBatchOSM()">⏸</button>
+                    <button class="btn btn-sm" onclick="window.detenerBatchOSM()">⏹</button>
+                  </div>
+                  <div style="height:5px; background:var(--bd2); border-radius:3px; margin-top:6px; overflow:hidden;">
+                    <div id="osm-barra" style="height:100%; width:0%; background:var(--p); transition:width .2s"></div>
+                  </div>
                 </div>
               </div>
               <div class="fu-clist" id="fuclist"></div>
@@ -332,9 +344,9 @@
         <div style="margin-top: 16px; padding: 12px; background: var(--s2); border: 1px solid var(--bd2); border-radius: var(--r); border-left: 4px solid #0891b2;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
             <div style="display: flex; flex-direction: column; gap: 2px;">
-              <span style="font-size: 10px; color: var(--tx3); text-transform: uppercase; letter-spacing: 0.5px;">SIGEC — predios SII (Araucanía)</span>
-              <strong style="font-size: 13px; color: var(--p);" id="sigec-headline">🔍 Geocodificador activo</strong>
-              <span style="font-size:11px;color:var(--tx3)">576k predios. Listo por defecto; configura solo si rotas el proyecto.</span>
+              <span style="font-size: 10px; color: var(--tx3); text-transform: uppercase; letter-spacing: 0.5px;" id="sigec-kicker">SIGEC — catastro de predios</span>
+              <strong style="font-size: 13px; color: var(--p);" id="sigec-headline">🔍 Geocodificador</strong>
+              <span style="font-size:11px;color:var(--tx3)" id="sigec-sub">Configúralo en Configuración avanzada.</span>
             </div>
             <span class="api-status api-ok" id="sigec-status">activo</span>
           </div>
@@ -391,7 +403,7 @@
             <strong style="font-size: 13px; color: var(--p);">SIGE 4.2 - Dratini 🐉</strong>
           </div>
           <div style="text-align: right;">
-            <span style="font-size: 11px; background: #ecfeff; color: #0891b2; padding: 4px 8px; border-radius: 4px; font-weight: 600;">SIGEC Activo</span>
+            <span style="font-size: 11px; background: #ecfeff; color: #0891b2; padding: 4px 8px; border-radius: 4px; font-weight: 600;" id="sigec-badge">SIGEC</span>
           </div>
         </div>
 

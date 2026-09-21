@@ -19,9 +19,11 @@ Archivos **nuevos**:
 | `docs/comunicaciones/01_contexto_repo_canonico.md` | Por qué DRIX es la base y no el repo personal. |
 | `docs/comunicaciones/02_alcance_y_pendientes.md` | Alcance del cambio y bloqueos institucionales (SERVEL / Railway). |
 | `tools/verify_region_config.mjs` | Harness que ejercita los exportadores reales y verifica el contrato. |
+| `js/geocode-queue.js` | Lote asistido contra Nominatim: un hilo, espaciado por política OSM, caché y cascada progresiva. |
 | `js/telemetry.js` | Medición local de uso (opt-in, sin red, sin datos personales). |
 | `tools/telemetry_report.mjs` | Analiza el JSON de medición y traduce cada umbral superado en una acción. |
 | `tools/verify_telemetry.mjs` | Verifica las garantías de la telemetría (sin red, sin PII, a prueba de fallos). |
+| `tools/verify_geocode_queue.mjs` | Verifica que el lote respeta la política de uso de Nominatim. |
 | `.github/workflows/ci.yml` | CI: contrato, telemetría, backend e higiene del repo en cada PR. |
 
 Ediciones **mínimas** a archivos existentes (solo wiring, contrato intacto):
@@ -51,6 +53,28 @@ Para reactivarlo: levantar `server/` (o un PostgREST sobre el catastro XIV) y
 pegar la URL en **⚙ APIs** — nunca en el repo; el CI corta el build si aparece
 una URL `*.up.railway.app` en el front. Detalle en
 `docs/comunicaciones/03_despliegue_y_entornos.md`.
+
+## Auto-OSM — el lote para regiones sin catastro
+
+El **Auto-Urbanos** exige SIGEC, así que en XIV no corre. El botón 🌍 **Auto-OSM**
+llena ese hueco: recorre los clusters pendientes contra Nominatim y propone
+coordenada, dejando todo *Por revisar* igual que el Auto-Urbanos.
+
+Respeta la política de uso de OSM al pie de la letra, porque saltársela hace que
+bloqueen la IP de SERVEL:
+
+- **Asistido** — 1,1 s entre consultas, tope de 60 nuevas. Uso interactivo.
+- **Masivo** — 15 s entre consultas (4/min), sin tope, pausable y reanudable.
+- Un solo hilo, caché local obligatorio (180 días, cachea también los fallos) y
+  cascada progresiva: calle+número → calle → localidad, parando en el primer
+  acierto y proponiendo el tipo según el nivel que acertó.
+
+`tools/verify_geocode_queue.mjs` verifica todo eso en CI con reloj virtual y sin
+tocar la red. Ver `docs/comunicaciones/05_auto_osm.md`.
+
+> Con volúmenes de miles de registros, Nominatim tarda horas. Si esa es la
+> escala habitual, la respuesta es un catastro propio o un proveedor pago, no
+> un lote más agresivo.
 
 ## Contrato de salida (UNIVERSAL — no se toca)
 

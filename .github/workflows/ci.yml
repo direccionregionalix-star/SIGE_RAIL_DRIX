@@ -36,6 +36,11 @@ jobs:
       - name: Verificar telemetría
         run: node tools/verify_telemetry.mjs
 
+      # Política de uso de Nominatim: un hilo, espaciado, caché obligatorio.
+      # Romperla hace que bloqueen la IP de SERVEL, así que se verifica.
+      - name: Verificar la cola de geocodificación
+        run: node tools/verify_geocode_queue.mjs
+
       # Contrato del backend SIGEC (no abre conexiones: inyecta un runner falso).
       - name: Tests de contrato del backend SIGEC
         working-directory: server

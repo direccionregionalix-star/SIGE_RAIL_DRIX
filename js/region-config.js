@@ -23,7 +23,10 @@ export const REGION_CONFIG = {
     // infraestructura, no código; en el modal vive en el localStorage de cada PC
     // y no queda versionado en un repo público. Si además pasa a ser el motor
     // principal de la región, recién ahí primary vuelve a 'sigec'.
-    sigec: { url: '', key: '' }
+    // `catastro` describe QUÉ hay detrás de SIGEC en esta región, y es lo que la
+    // UI muestra. En null porque Los Ríos no tiene catastro propio: así la
+    // pantalla no promete "576k predios SII de Araucanía" como hacía antes.
+    sigec: { url: '', key: '', catastro: null }
   },
   // CUT/INE de 5 dígitos (como en el padrón y el catastro). Los Ríos SIEMPRE es
   // 5 dígitos; no hay cero a la izquierda que se pierda (eso es de Araucanía).

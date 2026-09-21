@@ -16,22 +16,37 @@
 // leen REGION_CONFIG.comunas. NO los edites al replicar.
 
 export const REGION_CONFIG = {
-  region:       'NOMBRE_REGION',   // ej. 'Los Ríos'
-  codigo:       0,                 // código numérico de región (CUT), ej. 14
-  codigoRomano: 'XX',              // etiqueta institucional, ej. 'XIV'
+  // ⚠️ Estas llaves son las que el código lee de verdad (regionName, regionCode,
+  // instance). Una versión anterior de esta plantilla usaba region/codigo/
+  // codigoRomano, que NO existen en ninguna parte del SIGE: quien la copiara
+  // obtenía una instancia muda. Si cambias un nombre acá, cámbialo también en
+  // js/app.js (applyRegionConfigUI) y en js/sigec-client.js.
+  regionName: 'NOMBRE_REGION',     // ej. 'Los Ríos'
+  regionCode: 'NN',                // CUT de región como string, ej. '14'
+  instance:   'SIGE NN (NOMBRE_REGION)',   // lo que va en el <title>
 
   // Geocodificación cliente-side.
-  //  · primary:  motor propio de la región, ej. 'sigec' (Araucanía) o null si no hay.
-  //  · fallback: motor genérico cuando no hay primario, ej. 'nominatim'.
+  //  · primary:  motor de la región — 'sigec' si tiene catastro propio, si no 'nominatim'.
+  //  · fallback: motor genérico de respaldo.
+  //  · sigec.url: DÉJALA VACÍA en el repo. El endpoint se configura en ⚙ APIs,
+  //    que vive en el localStorage de cada equipo. Una URL de servicio escrita
+  //    acá muere con el servicio y deja el botón colgando sin explicación.
+  //  · sigec.catastro: qué hay detrás de SIGEC en esta región; es lo que la UI
+  //    muestra. null si la región no tiene catastro propio.
+  //      ej. { nombre: 'predios SII de Araucanía', volumen: '576k' }
   geocoder: {
-    primary:  null,
-    fallback: 'nominatim'
+    primary:  'nominatim',
+    fallback: 'nominatim',
+    sigec: { url: '', key: '', catastro: null }
   },
 
-  // Diccionario CUT (SII) → nombre oficial de comuna.
-  // Llaves como string SIN cero a la izquierda; valores en MAYÚSCULA.
+  // Diccionario CUT (INE/SII) → nombre oficial de comuna.
+  // Llaves como string, con el MISMO largo con que llegan en el padrón
+  // (en Los Ríos son 5 dígitos: '14101'). Valores en MAYÚSCULA, sin tilde.
+  // No inventes correlativos: usa el CUT oficial, que no es secuencial entre
+  // provincias.
   comunas: {
-    // 'XXXX': 'NOMBRE_COMUNA',
+    // 'NNNNN': 'NOMBRE_COMUNA',
   }
 };
 

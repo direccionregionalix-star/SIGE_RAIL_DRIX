@@ -12,6 +12,7 @@ import * as sigec from './sigec-client.js';
 import { comunaSeed, comunaName as regionComunaName, REGION_CONFIG } from './region-config.js';
 import * as recintoMatch from './recinto-match.js';
 import * as telemetry from './telemetry.js';
+import * as geoQueue from './geocode-queue.js';
 
 /* CONSTANTES Y UI */
 const SFIELDS = ['calle','numero','resto','localidad','comuna','referencia','latitud','longitud'];
@@ -101,18 +102,34 @@ function applyRegionConfigUI() {
 
   const st = document.getElementById('sigec-status');
   const head = document.getElementById('sigec-headline');
+  const kicker = document.getElementById('sigec-kicker');
+  const sub = document.getElementById('sigec-sub');
+  const badge = document.getElementById('sigec-badge');
+
+  // El catastro que hay detrás de SIGEC es regional. Antes el HTML decía
+  // "predios SII (Araucanía)" y "576k predios" fijos: en la instancia XIV eso
+  // era simplemente falso y mandaba al operador a buscar algo que no existe.
+  const cat = (rc.geocoder && rc.geocoder.sigec && rc.geocoder.sigec.catastro) || null;
+  if (kicker) kicker.textContent = cat ? `SIGEC — ${cat.nombre}` : 'SIGEC — catastro de predios';
 
   if (!disponible) {
     if (st) { st.textContent = 'sin catastro'; st.className = 'api-status api-empty'; }
     if (head) head.textContent = `🌍 ${rc.regionName || 'Región'} — geocoder: ${fb} · SIGEC sin catastro regional`;
+    if (sub) sub.textContent = `${rc.regionName || 'Esta región'} no tiene catastro de predios propio. Se usa ${fb}.`;
+    if (badge) { badge.textContent = `Geocoder: ${fb}`; badge.style.background = '#f1f5f9'; badge.style.color = '#475569'; }
     const motivo = document.getElementById('sigec-motivo');
     if (motivo) motivo.textContent = sigec.unavailableReason();
     // Los botones que dependen de SIGEC se deshabilitan explícitamente.
     const btnBatch = document.getElementById('btn-batch');
     if (btnBatch) { btnBatch.disabled = true; btnBatch.title = sigec.unavailableReason(); }
-  } else if (primary !== 'sigec') {
-    if (st) { st.textContent = 'opcional'; st.className = 'api-status api-empty'; }
-    if (head) head.textContent = `🌍 ${rc.regionName || 'Región'} — geocoder primario: ${fb} · SIGEC opcional`;
+  } else {
+    if (sub) sub.textContent = cat ? `${cat.volumen || ''} ${cat.nombre}. Listo por defecto; configura solo si rotas el proyecto.`.trim()
+                                   : 'Listo por defecto; configura solo si rotas el proyecto.';
+    if (badge) badge.textContent = 'SIGEC Activo';
+    if (primary !== 'sigec') {
+      if (st) { st.textContent = 'opcional'; st.className = 'api-status api-empty'; }
+      if (head) head.textContent = `🌍 ${rc.regionName || 'Región'} — geocoder primario: ${fb} · SIGEC opcional`;
+    }
   }
 
   // Refleja el estado real del interruptor de medición al abrir la app.
@@ -631,6 +648,13 @@ function renderPanel(key){
 
   let queryVisual = queryParts.filter(Boolean).join(', ');
 
+  // El botón SIGEC solo existe si la región TIENE catastro consultable. Donde no
+  // lo hay (Los Ríos hoy) mostrarlo solo gasta el clic y la atención del
+  // operador: aprieta, no pasa nada útil, y concluye que el SIGE anda malo.
+  const btnSIGEC = sigec.isAvailable()
+    ? `<button class="btn btn-sm" style="background:#0891b2;color:#fff" onclick="window.geoSIGEC('${ej(key)}')">🔍 SIGEC</button>`
+    : '';
+
   document.getElementById('fumid').innerHTML=`
     <div class="fu-mh"><div style="display:flex; align-items:center; gap:10px;"><h2 style="margin:0;">${h(c.key)}</h2><button class="btn btn-sm" onclick="window.renameCluster('${ej(key)}')">✏️ Editar</button></div>
     <div class="sub" style="display:flex; align-items:center; gap:4px; margin-top:4px;">${c.rows.length} reg. ${sug} ${fusInfo}</div></div>
@@ -645,10 +669,10 @@ function renderPanel(key){
     <div class="geo-row" style="flex-direction:column;align-items:stretch;gap:7px">
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${(c.tipo==='EXACTO' || c.tipo==='CALLE') ? `<button class="btn btn-sm btn-p" onclick="window.geoNominatim('${ej(key)}')">📍 Nominatim</button>
-          <button class="btn btn-sm" style="background:#0891b2;color:#fff" onclick="window.geoSIGEC('${ej(key)}')">🔍 SIGEC</button>
+          ${btnSIGEC}
           ${document.getElementById('key-gmaps')?.value.trim() ? `<button class="btn btn-sm" onclick="window.geoGoogle('${ej(key)}')">📍 Google</button>` : ''}` : ''}
         ${c.tipo==='LOCALIDAD' ? `<button class="btn btn-sm btn-rural" onclick="window.openLM('${ej(key)}')">🏘️ Seleccionar localidad</button>
-          <button class="btn btn-sm" style="background:#0891b2;color:#fff" onclick="window.geoSIGEC('${ej(key)}')">🔍 SIGEC</button>` : ''}
+          ${btnSIGEC}` : ''}
         <span class="gstat ${c.latFinal?'gs-ok':''}" id="gstat">${c.latFinal ? (c.needsReview ? '⌛ Propuesta pendiente' : '✓ Confirmado') : 'Sin coordenada'}</span>
       </div>
       
@@ -1533,7 +1557,9 @@ window.startBatchUrban = async function() {
     return alert(`No hay clusters urbanos pendientes de hasta ${maxRows} registro(s) para procesar.`);
   }
 
-  if (!confirm(`Se encontraron ${candidatos.length} candidatos (de hasta ${maxRows} registros).\n\n🔍 Se consultará SOLO contra SIGEC (predios SII de Araucanía).\nLos que no tengan match quedan sin tocar, para revisión manual.\n\nTodos los resultados con match quedan "por revisar" para tu confirmación.\n\n¿Iniciar?`)) return;
+  // El catastro es regional: no lo escribimos fijo en el texto.
+  const catNom = (REGION_CONFIG?.geocoder?.sigec?.catastro?.nombre) || 'el catastro de predios configurado';
+  if (!confirm(`Se encontraron ${candidatos.length} candidatos (de hasta ${maxRows} registros).\n\n🔍 Se consultará SOLO contra SIGEC (${catNom}).\nLos que no tengan match quedan sin tocar, para revisión manual.\n\nTodos los resultados con match quedan "por revisar" para tu confirmación.\n\n¿Iniciar?`)) return;
 
   btn.disabled = true;
   let exitosos = 0, sinMatch = 0;
@@ -1580,6 +1606,131 @@ window.startBatchUrban = async function() {
   if (curC && state.clusters[curC]) renderPanel(curC);
   window.autoSave();
   telemetry.autoUrbanos({ candidatos: candidatos.length, exitosos, sinMatch });
+};
+
+// ═══════════════════════════════════════════════════════════════
+// AUTO-OSM — lote asistido contra Nominatim, para regiones SIN catastro propio
+// ═══════════════════════════════════════════════════════════════
+// El Auto-Urbanos exige SIGEC. Donde no hay catastro regional (Los Ríos hoy) el
+// operador quedaba sin ningún modo automático. Esto le da el lote respetando la
+// política de uso de OSM: un hilo, espaciado obligatorio, caché y cascada.
+// Igual que el Auto-Urbanos, TODO resultado queda "por revisar": esto propone,
+// no decide.
+let _colaOSM = null;
+
+function osmUI(mostrar) {
+  const p = document.getElementById('osm-progreso');
+  if (p) p.style.display = mostrar ? 'block' : 'none';
+}
+
+window.pausarBatchOSM = function () {
+  if (!_colaOSM) return;
+  const b = document.getElementById('osm-pausa');
+  if (_colaOSM.estado.pausado) { _colaOSM.reanudar(); if (b) b.textContent = '⏸'; }
+  else { _colaOSM.pausar(); if (b) b.textContent = '▶'; }
+};
+
+window.detenerBatchOSM = function () { if (_colaOSM) _colaOSM.detener(); };
+
+window.startBatchNominatim = async function () {
+  if (_colaOSM && _colaOSM.estado.corriendo) return alert('Ya hay un lote corriendo.');
+
+  // Mismos candidatos que el Auto-Urbanos: pendientes, sin validar, y que el
+  // pre-clasificador marcó como urbanos.
+  const candidatos = Object.values(state.clusters).filter(c => !c.tipo && !c.autoVal && !c.latFinal);
+  if (!candidatos.length) return alert('No hay clusters pendientes sin coordenada.');
+
+  const regionName = (REGION_CONFIG && REGION_CONFIG.regionName) || '';
+  const trabajos = candidatos.map(c => ({
+    id: c.key,
+    cut: String(c.rows[0]?.codComuna || c.rows[0]?.comuna || ''),
+    niveles: geoQueue.construirCascada(c.rows[0], regionName)
+  })).filter(t => t.niveles.length);
+
+  if (!trabajos.length) return alert('Los clusters pendientes no tienen texto de dirección utilizable.');
+
+  const stats = geoQueue.cacheStats();
+  const modo = confirm(
+    `🌍 Auto-OSM sobre ${trabajos.length} cluster(s) pendientes.\n\n` +
+    `Nominatim es un servicio gratuito de OpenStreetMap. Su política de uso obliga\n` +
+    `a espaciar las consultas; saltársela hace que bloqueen la IP de SERVEL.\n\n` +
+    `▸ ACEPTAR  = modo ASISTIDO: 1 consulta/segundo, máximo 60 consultas nuevas.\n` +
+    `             Uso interactivo. Duración ${geoQueue.estimar(trabajos.length, 'asistido')}.\n\n` +
+    `▸ CANCELAR = elegir modo MASIVO (una cada 15 s, sin tope) en el siguiente paso.\n\n` +
+    `Caché local: ${stats.entradas} direcciones ya consultadas (no se repreguntan).\n\n` +
+    `Todo resultado queda "por revisar" para tu confirmación.`
+  ) ? 'asistido' : null;
+
+  let modoFinal = modo;
+  if (!modoFinal) {
+    if (!confirm(
+      `Modo MASIVO: una consulta cada 15 segundos, sin tope.\n\n` +
+      `${trabajos.length} clusters ≈ ${geoQueue.estimar(trabajos.length, 'masivo')} de reloj.\n\n` +
+      `Debe correr en UNA sola máquina y puedes pausarlo o detenerlo cuando quieras.\n` +
+      `El avance se guarda: lo ya resuelto no se vuelve a consultar.\n\n` +
+      `¿Iniciar en modo masivo?`
+    )) return;
+    modoFinal = 'masivo';
+  }
+
+  const btn = document.getElementById('btn-batch-osm');
+  if (btn) btn.disabled = true;
+  osmUI(true);
+
+  _colaOSM = geoQueue.crearCola({ modo: modoFinal });
+
+  const t0 = Date.now();
+  const resumen = await _colaOSM.procesar(trabajos, {
+    onResultado: ({ trabajo, hallazgo }) => {
+      if (!hallazgo) return;
+      const c = state.clusters[trabajo.id];
+      if (!c) return;
+      // Nivel 1 (portal) → EXACTO. Nivel 2 (eje de calle) → CALLE.
+      // Nivel 3 (lugar poblado) → LOCALIDAD. La precisión de la consulta que
+      // acertó es la que manda: no inventamos precisión que no tenemos.
+      c.tipo = hallazgo.nivel === 1 ? 'EXACTO' : (hallazgo.nivel === 2 ? 'CALLE' : 'LOCALIDAD');
+      c.latFinal = hallazgo.lat;
+      c.lonFinal = hallazgo.lon;
+      c.metodo = `Auto-OSM · ${hallazgo.precision}${hallazgo.fuente === 'cache' ? ' (caché)' : ''}`;
+      c.confianza = 'nominatim';
+      c.needsReview = true;
+      c.rows.forEach(r => {
+        r.tipo = c.tipo; r.latFinal = c.latFinal; r.lonFinal = c.lonFinal;
+        r.metodo = c.metodo; r.needsReview = true;
+      });
+    },
+    onProgreso: (p) => {
+      const txt = document.getElementById('osm-texto');
+      const bar = document.getElementById('osm-barra');
+      if (txt) txt.textContent = `${p.hechos}/${p.total} · ✅ ${p.resueltos} · ❓ ${p.sinMatch} · 🌐 ${p.consultasRed} consultas`;
+      if (bar) bar.style.width = Math.round((p.hechos / p.total) * 100) + '%';
+    }
+  });
+
+  osmUI(false);
+  if (btn) btn.disabled = false;
+  const pausaBtn = document.getElementById('osm-pausa');
+  if (pausaBtn) pausaBtn.textContent = '⏸';
+
+  renderFUList(); updateProg();
+  if (curC && state.clusters[curC]) renderPanel(curC);
+  window.autoSave();
+
+  telemetry.geocoder('nominatim', resumen.resueltos ? 'ok' : 'sinResultado', Date.now() - t0);
+  telemetry.autoOSM({
+    candidatos: trabajos.length, resueltos: resumen.resueltos,
+    sinMatch: resumen.sinMatch, consultasRed: resumen.consultasRed, modo: modoFinal
+  });
+
+  alert(
+    `${resumen.detenido ? '⏹ Lote detenido.' : '✅ Lote completado.'}\n\n` +
+    `✅ Con coordenada propuesta: ${resumen.resueltos}\n` +
+    `❓ Sin coincidencia: ${resumen.sinMatch}\n` +
+    `⚠️ Errores de red: ${resumen.errores}\n` +
+    `🌐 Consultas reales a Nominatim: ${resumen.consultasRed}` +
+    (resumen.omitidosPorTope ? `\n⏭️ ${resumen.omitidosPorTope} omitidos por el tope del modo asistido (vuelve a correrlo)` : '') +
+    `\n\n⚠️ Todos quedan "Por revisar": necesitan tu confirmación.`
+  );
 
   alert(
     `✅ Proceso completado.\n\n` +
