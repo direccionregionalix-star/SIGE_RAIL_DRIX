@@ -1,5 +1,6 @@
 // core.js - Lógica principal de negocio, Supermente y cruces de datos
 import { state } from './store.js';
+import { comunaName as regionComunaName } from './region-config.js';
 
 export function resolveComunaName(row) {
     if (!row) return '';
@@ -27,7 +28,11 @@ export function resolveComunaName(row) {
         if (loc && loc.comuna) return String(loc.comuna).trim();
     }
 
-    // 5. Último recurso: si el usuario no cargó el maestro de localidades, 
+    // 4.5 Fallback región (region_config): resuelve CUT→nombre aunque no se haya
+    // cargado el maestro de localidades ni el GeoJSON (permite operar offline).
+    if (codComuna) { const n = regionComunaName(codComuna); if (n) return n; }
+
+    // 5. Último recurso: si el usuario no cargó el maestro de localidades,
     // devolvemos lo que tengamos para no romper la app.
     return isNumeric ? codComuna : '';
 }

@@ -18,5 +18,6 @@ export const state = {
 
   // 3. Capas GIS
   referenceGeoJSON: null,   // Objeto parseado del GeoJSON de fondo (polígonos)
-  recintosPointsData: null  // Objeto parseado del GeoJSON de puntos (recintos)
+  recintosPointsData: null, // Objeto parseado del GeoJSON de puntos (recintos)
+  recintosMaestro: []       // Maestro preparado para el cruce "MOVER A ESTE RECINTO"
 };
